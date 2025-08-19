@@ -40,6 +40,7 @@ contract AaveAdapter {
      * @param amount The amount of vault's underlying asset token to withdraw
      */
     function _aaveDivest(IERC20 token, uint256 amount) internal returns (uint256 amountOfAssetReturned) {
+        // @audit: the return value is not used, let's come back to this
         i_aavePool.withdraw({
             asset: address(token),
             amount: amount,

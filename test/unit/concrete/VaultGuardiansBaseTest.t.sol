@@ -107,6 +107,42 @@ contract VaultGuardiansBaseTest is Base_Test {
         vm.stopPrank();
     }
 
+    function testCanBecomeTokenGuardianBeingAWethGuardian() public hasGuardian {
+        usdc.mint(mintAmount, guardian);
+        vm.startPrank(guardian);
+        usdc.approve(address(vaultGuardians), mintAmount);
+        address usdcVault = vaultGuardians.becomeTokenGuardian(allocationData, usdc);
+
+        assertEq(address(vaultGuardians.getVaultFromGuardianAndToken(guardian, usdc)), usdcVault);
+        vm.stopPrank();
+    }
+
+    // @audit this test proves that there is a bug in VaultShares.sol, because the Uniswap liquidity token is the same for both weth-usdc and link-usdc
+    function testLinkLiquidityTokenWrong() public /*hasGuardian*/ { 
+        // usdc.mint(mintAmount, guardian);
+        // link.mint(mintAmount, guardian);
+        // vm.startPrank(guardian);
+        // usdc.approve(address(vaultGuardians), mintAmount);
+        // link.approve(address(vaultGuardians), mintAmount);
+
+        // address usdcVault = vaultGuardians.becomeTokenGuardian(allocationData, usdc);
+        // assertEq(address(vaultGuardians.getVaultFromGuardianAndToken(guardian, usdc)), usdcVault);
+        
+        // address linkVault = vaultGuardians.becomeTokenGuardian(allocationData, link);
+        // assertEq(address(vaultGuardians.getVaultFromGuardianAndToken(guardian, link)), linkVault);
+
+        // assertEq(address(VaultShares(linkVault).getUniswapLiquidtyToken()), address(VaultShares(usdcVault).getUniswapLiquidtyToken()));
+        // vm.stopPrank();
+
+        // weth.mint(mintAmount, guardian);
+        // vm.startPrank(guardian);
+        // weth.approve(address(vaultGuardians), mintAmount);
+        // address wethVault = vaultGuardians.becomeGuardian(allocationData);
+        // wethVaultShares = VaultShares(wethVault);
+        // vm.stopPrank();
+        // console.log(address(wethVaultShares.getUniswapLiquidtyToken()));
+    }
+
     modifier hasGuardian() {
         weth.mint(mintAmount, guardian);
         vm.startPrank(guardian);
@@ -132,6 +168,14 @@ contract VaultGuardiansBaseTest is Base_Test {
         );
         vaultGuardians.updateHoldingAllocation(weth, newAllocationData);
         vm.stopPrank();
+    }
+
+    // @audit: add this test
+    function testGuardianCanUpdateHoldingAllocation() public hasGuardian {
+        // vm.startPrank(guardian);
+        // vaultGuardians.updateHoldingAllocation(weth, newAllocationData);
+        // assertEq(vaultGuardians.getAllocationData(), newAllocationData);
+        // vm.stopPrank();
     }
 
     function testQuitGuardian() public hasGuardian {

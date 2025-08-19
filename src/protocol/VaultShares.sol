@@ -67,6 +67,9 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
      */
     modifier divestThenInvest() {
         uint256 uniswapLiquidityTokensBalance = i_uniswapLiquidityToken.balanceOf(address(this));
+        // @audit-medium: the balanceOf call will revert if the underlying asset is weth, 
+        // because i_uniswapLiquidityToken will be the null address, 
+        // breaking the divestThenInvest modifier
         uint256 aaveAtokensBalance = i_aaveAToken.balanceOf(address(this));
 
         // Divest
@@ -95,6 +98,9 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
         ERC20(constructorData.vaultName, constructorData.vaultSymbol)
         AaveAdapter(constructorData.aavePool)
         UniswapAdapter(constructorData.uniswapRouter, constructorData.weth, constructorData.usdc)
+        // q: why is the UniswapAdapter constructor called with usdc?
+        // a: this is created like this because if the underlying asset of the vault is WETH, 
+        // then the pool is WETH-USDC, but if the underlying asset is any other ERC20 token, then the pool is WETH-token
     {
         i_guardian = constructorData.guardian;
         i_guardianAndDaoCut = constructorData.guardianAndDaoCut;
@@ -105,7 +111,9 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
         // External calls
         i_aaveAToken =
             IERC20(IPool(constructorData.aavePool).getReserveData(address(constructorData.asset)).aTokenAddress);
-        i_uniswapLiquidityToken = IERC20(i_uniswapFactory.getPair(address(constructorData.asset), address(i_weth)));
+        i_uniswapLiquidityToken = IERC20(i_uniswapFactory.getPair(address(constructorData.asset), address(i_weth))); 
+        // @audit-medium: this gets the address of the liquidity token for the UniswapV2 pool with the asset and weth,
+        // but if the asset is weth, then i_uniswapLiquidityToken will be the null address, breaking the divestThenInvest modifier
     }
 
     /**
@@ -149,10 +157,10 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
         }
 
         uint256 shares = previewDeposit(assets);
-        _deposit(_msgSender(), receiver, assets, shares);
+        _deposit(_msgSender(), receiver, assets, shares); // assets is the amount of assets to deposit, shares is the amount of shares to mint
 
         _mint(i_guardian, shares / i_guardianAndDaoCut);
-        _mint(i_vaultGuardians, shares / i_guardianAndDaoCut);
+        _mint(i_vaultGuardians, shares / i_guardianAndDaoCut); // q why these divisions? why mint both to the guardian and the VaultGuardians contract?
 
         _investFunds(assets);
         return shares;
@@ -187,6 +195,7 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
      * Then, we redeem for the user, and automatically reinvest.
      */
     function withdraw(uint256 assets, address receiver, address owner)
+    // a: in this function the amount of underlying asset to withdraw is specified
         public
         override(IERC4626, ERC4626)
         divestThenInvest
@@ -210,6 +219,7 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
         nonReentrant
         returns (uint256)
     {
+        // a: in this function the amount of shares to redeem to get back the underlying asset is specified
         uint256 assets = super.redeem(shares, receiver, owner);
         return assets;
     }
@@ -258,6 +268,7 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
      * @return Uniswap's LP token
      */
     function getUniswapLiquidtyToken() external view returns (address) {
+        // @audit-info: function name is wrong, it should be getUniswapLiquidityToken
         return address(i_uniswapLiquidityToken);
     }
 

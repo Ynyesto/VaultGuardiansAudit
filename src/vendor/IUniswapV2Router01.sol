@@ -29,6 +29,7 @@ interface IUniswapV2Router01 {
         uint256 deadline
     ) external returns (uint256 amountA, uint256 amountB);
 
+    // q why is this commented out?
     // function removeLiquidityWithPermit(
     //     address tokenA,
     //     address tokenB,

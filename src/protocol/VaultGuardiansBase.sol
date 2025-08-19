@@ -69,6 +69,7 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     uint256 internal s_guardianAndDaoCut = 1000;
 
     // The guardian's address mapped to the asset, mapped to the allocation data
+    // @audit-info this is a mapping of guardian address to asset address to an IVaultShares contract, not to allocation data
     mapping(address guardianAddress => mapping(IERC20 asset => IVaultShares vaultShares)) private s_guardians;
     mapping(address token => bool approved) private s_isApprovedToken;
 
@@ -86,6 +87,8 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     //////////////////////////////////////////////////////////////*/
     modifier onlyGuardian(IERC20 token) {
         if (address(s_guardians[msg.sender][token]) == address(0)) {
+            // a: this is a mapping of guardian address to asset address to VaultShares contract, not to a guardian, 
+            // so this modifier checks that the msg.sender is a guardian by checking it has a VaultShares contract associated to it
             revert VaultGuardiansBase__NotAGuardian(msg.sender, token);
         }
         _;
@@ -133,7 +136,7 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
             guardianAndDaoCut: s_guardianAndDaoCut,
             vaultGuardians: address(this),
             weth: address(i_weth),
-            usdc: address(i_tokenOne)
+            usdc: address(i_tokenOne) // this could be any token, not just USDC 
         }));
         return _becomeTokenGuardian(i_weth, wethVault);
     }
@@ -151,6 +154,8 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     {
         //slither-disable-next-line uninitialized-local
         VaultShares tokenVault;
+        // @audit-info: not only is this terrible code, also in the else if branch TOKEN_ONE_VAULT_NAME
+        // and TOKEN_ONE_VAULT_SYMBOL are used instead of TOKEN_TWO_VAULT_NAME and TOKEN_TWO_VAULT_SYMBOL
         if (address(token) == address(i_tokenOne)) {
             tokenVault =
             new VaultShares(IVaultShares.ConstructorData({
@@ -179,7 +184,7 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
                 guardianAndDaoCut: s_guardianAndDaoCut,
                 vaultGuardians: address(this),
                 weth: address(i_weth),
-                usdc: address(i_tokenOne)
+                usdc: address(i_tokenOne) // @audit-medium: this is wrong, it should be address(i_tokenTwo)
             }));
         } else {
             revert VaultGuardiansBase__NotApprovedToken(address(token));
