@@ -129,3 +129,157 @@ _mint(i_vaultGuardians, daoCut);
 ```
 
 This ensures that exactly 100% of shares are minted per deposit, maintaining the economic balance of the protocol.
+
+---
+
+### [M-2] All Uniswap operations lack slippage protection, making them vulnerable to sandwich attacks
+
+**Description:** 
+
+The `UniswapAdapter` contract performs all Uniswap operations with `amountOutMin: 0`, `amountAMin: 0` and `amountBMin: 0`, making every swap, liquidity addition, and liquidity removal vulnerable to sandwich attacks:
+
+1. **`swapExactTokensForTokens`** (line 56): `amountOutMin: 0`
+2. **`addLiquidity`** (lines 80-81): `amountAMin: 0, amountBMin: 0`  
+3. **`removeLiquidity`** (lines 101-102): `amountAMin: 0, amountBMin: 0`
+
+**Impact:** 
+
+- **Sandwich attack vulnerability**: MEV bots can front-run vault operations, manipulate prices, and back-run to extract value
+- **Value extraction**: Users lose value on every swap and liquidity operation
+- **Economic inefficiency**: The protocol consistently gets worse rates than intended
+- **MEV exploitation**: The protocol becomes a target for predatory trading strategies
+
+**Code Location:**
+
+```solidity
+// Lines 56 and 106: Swap without slippage protection
+amountOutMin: 0,
+
+// Lines 77-78: Add liquidity without slippage protection  
+amountAMin: 0,
+amountBMin: 0,
+
+// Lines 98-99: Remove liquidity without slippage protection
+amountAMin: 0,
+amountBMin: 0,
+```
+
+**Recommended Mitigation:** 
+
+Implement proper slippage protection by calculating minimum amounts based on expected output and adding a tolerance parameter:
+
+```solidity
+// Add slippage tolerance parameter
+uint256 public constant SLIPPAGE_TOLERANCE = 50; // 0.5%
+
+// Calculate minimum amounts with slippage protection
+uint256 amountOutMin = (expectedAmountOut * (1000 - SLIPPAGE_TOLERANCE)) / 1000;
+uint256 amountAMin = (expectedAmountA * (1000 - SLIPPAGE_TOLERANCE)) / 1000;
+uint256 amountBMin = (expectedAmountB * (1000 - SLIPPAGE_TOLERANCE)) / 1000;
+
+// Use calculated minimums instead of 0
+amountOutMin: amountOutMin,
+amountAMin: amountAMin,
+amountBMin: amountBMin,
+```
+
+This would protect users from excessive slippage while maintaining reasonable execution rates.
+---
+
+### [I-1] Incorrect comment in `UniswapAdapter._uniswapInvest()` function
+
+**Description:** 
+
+The following comment in the `UniswapAdapter::_uniswapInvest()` function is incorrect:
+
+```solidity
+* @notice So we swap out half of the vault's underlying asset token for WETH if the asset token is USDC or WETH
+```
+
+This should read "if the asset token is USDC or LINK (or any other token)" since WETH is handled as a special case in the logic. When the asset is WETH, the function swaps half of it for USDC (`i_tokenOne`), not for WETH.
+
+**Impact:** 
+
+- **Documentation confusion**: Developers may misunderstand the intended behavior
+- **Code maintainability**: Misleading comments make the code harder to understand and maintain
+
+**Code Location:**
+
+```solidity
+// Line 32: Incorrect comment
+* @notice So we swap out half of the vault's underlying asset token for WETH if the asset token is USDC or WETH
+```
+
+**Recommended Mitigation:** 
+
+Fix the comment to accurately reflect the logic:
+
+```solidity
+* @notice So we swap out half of the vault's underlying asset token for WETH if the asset token is USDC or LINK
+```
+
+---
+
+### [I-2] Unnecessary double approval in `UniswapAdapter._uniswapInvest()` function
+
+**Description:** 
+
+The `_uniswapInvest()` function on line 66 approves `amountOfTokenToSwap + amounts[0]`:
+
+```solidity
+succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap + amounts[0]);
+```
+
+However, `amounts[0]` represents the amount of input token that was swapped, which equals `amountOfTokenToSwap`. This results in approving `2 * amountOfTokenToSwap`, which is unnecessary and grants to the Uniswap router double the approval needed.
+
+**Impact:** In the unlikely event that Uniswap were hacked, our vault could be drained, since it approves double what it needs to and then only the right amount of approval is consumed.
+
+**Code Location:**
+
+```solidity
+// Line 66: Double approval
+succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap + amounts[0]);
+```
+
+**Recommended Mitigation:** 
+
+Simplify the approval to only approve what's needed:
+
+```solidity
+// amounts[0] equals amountOfTokenToSwap, so just approve amountOfTokenToSwap
+succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap);
+```
+
+---
+
+### [I-3] Misleading comment about `amounts[1]` in `UniswapAdapter._uniswapInvest()` function
+
+**Description:** 
+
+The comment on line 73 states:
+
+```solidity
+// amounts[1] should be the WETH amount we got back
+```
+
+This is misleading because `amounts[1]` is only the WETH amount when swapping from a non-WETH token to WETH. When the asset is WETH itself, `amounts[1]` represents the USDC amount received from swapping WETH to USDC.
+
+**Impact:** 
+
+- **Code confusion**: Developers may misunderstand what `amounts[1]` represents
+- **Maintenance issues**: Incorrect comments make future code modifications more error-prone
+
+**Code Location:**
+
+```solidity
+// Line 71: Misleading comment  
+// amounts[1] should be the WETH amount we got back
+```
+
+**Recommended Mitigation:** 
+
+Update the comment to be more accurate:
+
+```solidity
+// amounts[1] is the amount of counterPartyToken received from the swap
+```

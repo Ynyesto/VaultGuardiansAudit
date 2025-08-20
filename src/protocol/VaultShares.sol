@@ -67,7 +67,7 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
      */
     modifier divestThenInvest() {
         uint256 uniswapLiquidityTokensBalance = i_uniswapLiquidityToken.balanceOf(address(this));
-        // @audit-medium: the balanceOf call will revert if the underlying asset is weth, 
+        // @audit-high: the balanceOf call will revert if the underlying asset is weth, 
         // because i_uniswapLiquidityToken will be the null address, 
         // breaking the divestThenInvest modifier
         uint256 aaveAtokensBalance = i_aaveAToken.balanceOf(address(this));
@@ -205,13 +205,13 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
      * Then, we redeem for the user, and automatically reinvest.
      */
     function withdraw(uint256 assets, address receiver, address owner)
-    // a: in this function the amount of underlying asset to withdraw is specified
         public
         override(IERC4626, ERC4626)
         divestThenInvest
         nonReentrant
         returns (uint256)
     {
+        // a: in this function the amount of underlying asset to withdraw is specified
         uint256 shares = super.withdraw(assets, receiver, owner);
         return shares;
     }

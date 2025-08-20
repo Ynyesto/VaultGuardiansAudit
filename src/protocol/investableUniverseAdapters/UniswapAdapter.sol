@@ -29,7 +29,7 @@ contract UniswapAdapter is AStaticUSDCData {
     // slither-disable-start reentrancy-events
     /**
      * @notice The vault holds only one type of asset token. However, we need to provide liquidity to Uniswap in a pair
-     * @notice So we swap out half of the vault's underlying asset token for WETH if the asset token is USDC or WETH
+     * @notice So we swap out half of the vault's underlying asset token for WETH if the asset token is USDC or WETH // @audit-info: typo: USDC or LINK (or any other token)
      * @notice However, if the asset token is WETH, we swap half of it for USDC (tokenOne)
      * @notice The tokens we obtain are then added as liquidity to Uniswap pool, and LP tokens are minted to the vault
      * @param token The vault's underlying asset token
@@ -53,7 +53,7 @@ contract UniswapAdapter is AStaticUSDCData {
         }
         uint256[] memory amounts = i_uniswapRouter.swapExactTokensForTokens({
             amountIn: amountOfTokenToSwap,
-            amountOutMin: 0,
+            amountOutMin: 0, // @audit-medium: all swaps will be sandwiched
             path: s_pathArray,
             to: address(this),
             deadline: block.timestamp
@@ -64,6 +64,8 @@ contract UniswapAdapter is AStaticUSDCData {
             revert UniswapAdapter__TransferFailed();
         }
         succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap + amounts[0]);
+        // @audit-info: looking at UniswapV2Library I can see that amounts[0] is the amount of the input token that was swapped
+        // therefore, here we are approving amountOfTokenToSwap * 2
         if (!succ) {
             revert UniswapAdapter__TransferFailed();
         }
@@ -72,9 +74,10 @@ contract UniswapAdapter is AStaticUSDCData {
         (uint256 tokenAmount, uint256 counterPartyTokenAmount, uint256 liquidity) = i_uniswapRouter.addLiquidity({
             tokenA: address(token),
             tokenB: address(counterPartyToken),
-            amountADesired: amountOfTokenToSwap + amounts[0],
+            amountADesired: amountOfTokenToSwap + amounts[0], 
+            // @audit-info: this is the 2 * amountOfTokenToSwap!!
             amountBDesired: amounts[1],
-            amountAMin: 0,
+            amountAMin: 0, // @audit-medium: adding liquidity will be sandwiched
             amountBMin: 0,
             to: address(this),
             deadline: block.timestamp
@@ -95,7 +98,7 @@ contract UniswapAdapter is AStaticUSDCData {
             tokenA: address(token),
             tokenB: address(counterPartyToken),
             liquidity: liquidityAmount,
-            amountAMin: 0,
+            amountAMin: 0, // @audit-medium: removing liquidity will be sandwiched
             amountBMin: 0,
             to: address(this),
             deadline: block.timestamp
@@ -103,7 +106,7 @@ contract UniswapAdapter is AStaticUSDCData {
         s_pathArray = [address(counterPartyToken), address(token)];
         uint256[] memory amounts = i_uniswapRouter.swapExactTokensForTokens({
             amountIn: counterPartyTokenAmount,
-            amountOutMin: 0,
+            amountOutMin: 0, // @audit-medium: swapping to get back the asset will be sandwiched
             path: s_pathArray,
             to: address(this),
             deadline: block.timestamp
