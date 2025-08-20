@@ -184,6 +184,39 @@ amountBMin: amountBMin,
 ```
 
 This would protect users from excessive slippage while maintaining reasonable execution rates.
+
+---
+
+### [L-1] Unnecessary double approval in `UniswapAdapter._uniswapInvest()` function
+
+**Description:** 
+
+The `_uniswapInvest()` function on line 66 approves `amountOfTokenToSwap + amounts[0]`:
+
+```solidity
+succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap + amounts[0]);
+```
+
+However, `amounts[0]` represents the amount of input token that was swapped, which equals `amountOfTokenToSwap`. This results in approving `2 * amountOfTokenToSwap`, which is unnecessary and grants to the Uniswap router double the approval needed.
+
+**Impact:** In the unlikely event that Uniswap were hacked, our vault could be drained, since it approves double what it needs to and then only the right amount of approval is consumed.
+
+**Code Location:**
+
+```solidity
+// Line 66: Double approval
+succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap + amounts[0]);
+```
+
+**Recommended Mitigation:** 
+
+Simplify the approval to only approve what's needed:
+
+```solidity
+// amounts[0] equals amountOfTokenToSwap, so just approve amountOfTokenToSwap
+succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap);
+```
+
 ---
 
 ### [I-1] Incorrect comment in `UniswapAdapter._uniswapInvest()` function
@@ -220,37 +253,6 @@ Fix the comment to accurately reflect the logic:
 
 ---
 
-### [I-2] Unnecessary double approval in `UniswapAdapter._uniswapInvest()` function
-
-**Description:** 
-
-The `_uniswapInvest()` function on line 66 approves `amountOfTokenToSwap + amounts[0]`:
-
-```solidity
-succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap + amounts[0]);
-```
-
-However, `amounts[0]` represents the amount of input token that was swapped, which equals `amountOfTokenToSwap`. This results in approving `2 * amountOfTokenToSwap`, which is unnecessary and grants to the Uniswap router double the approval needed.
-
-**Impact:** In the unlikely event that Uniswap were hacked, our vault could be drained, since it approves double what it needs to and then only the right amount of approval is consumed.
-
-**Code Location:**
-
-```solidity
-// Line 66: Double approval
-succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap + amounts[0]);
-```
-
-**Recommended Mitigation:** 
-
-Simplify the approval to only approve what's needed:
-
-```solidity
-// amounts[0] equals amountOfTokenToSwap, so just approve amountOfTokenToSwap
-succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap);
-```
-
----
 
 ### [I-3] Misleading comment about `amounts[1]` in `UniswapAdapter._uniswapInvest()` function
 
