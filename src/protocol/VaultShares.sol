@@ -112,7 +112,7 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
         i_aaveAToken =
             IERC20(IPool(constructorData.aavePool).getReserveData(address(constructorData.asset)).aTokenAddress);
         i_uniswapLiquidityToken = IERC20(i_uniswapFactory.getPair(address(constructorData.asset), address(i_weth))); 
-        // @audit-medium: this gets the address of the liquidity token for the UniswapV2 pool with the asset and weth,
+        // @audit-high: this gets the address of the liquidity token for the UniswapV2 pool with the asset and weth,
         // but if the asset is weth, then i_uniswapLiquidityToken will be the null address, breaking the divestThenInvest modifier
     }
 
@@ -159,8 +159,18 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
         uint256 shares = previewDeposit(assets);
         _deposit(_msgSender(), receiver, assets, shares); // assets is the amount of assets to deposit, shares is the amount of shares to mint
 
-        _mint(i_guardian, shares / i_guardianAndDaoCut);
-        _mint(i_vaultGuardians, shares / i_guardianAndDaoCut); // q why these divisions? why mint both to the guardian and the VaultGuardians contract?
+        _mint(i_guardian, shares / i_guardianAndDaoCut); 
+        _mint(i_vaultGuardians, shares / i_guardianAndDaoCut); 
+        // q why these divisions? 
+        // a: because the guardian and the DAO get a cut (0.1% by default) of the shares minted
+        // q why mint shares both to the guardian and the VaultGuardians contract?
+        // a: because the owner of the VaultGuardians contract is the DAO, so I suppose instead of 
+        // minting the shares to the DAO, we mint them to the VaultGuardians contract, 
+        // and then the DAO can sweep them
+        // @audit-medium: on every deposit we are minting shares to the guardian and the DAO, but these
+        // are not really "a cut" of the total, but additional to the amount minted to the user
+        // therefore, every deposit mints 100.2% of the shares that are supposed to be minted
+        // due to the additional 0.1% minted to the guardian and the DAO
 
         _investFunds(assets);
         return shares;

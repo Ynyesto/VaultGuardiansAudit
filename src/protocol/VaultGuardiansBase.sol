@@ -136,7 +136,8 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
             guardianAndDaoCut: s_guardianAndDaoCut,
             vaultGuardians: address(this),
             weth: address(i_weth),
-            usdc: address(i_tokenOne) // this could be any token, not just USDC 
+            usdc: address(i_tokenOne) // this could be any token, not just USDC, 
+            // but it seems like the intended behaviour is for tokenOne to always be USDC
         }));
         return _becomeTokenGuardian(i_weth, wethVault);
     }
@@ -175,7 +176,7 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
             tokenVault =
             new VaultShares(IVaultShares.ConstructorData({
                 asset: token,
-                vaultName: TOKEN_ONE_VAULT_NAME,
+                vaultName: TOKEN_ONE_VAULT_NAME, // these should be _TWO_ but that's a known issue (it was already described in audit-data)
                 vaultSymbol: TOKEN_ONE_VAULT_SYMBOL,
                 guardian: msg.sender,
                 allocationData: allocationData,
@@ -184,7 +185,9 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
                 guardianAndDaoCut: s_guardianAndDaoCut,
                 vaultGuardians: address(this),
                 weth: address(i_weth),
-                usdc: address(i_tokenOne) // @audit-medium: this is wrong, it should be address(i_tokenTwo)
+                usdc: address(i_tokenOne) // q: why is this not address(i_tokenTwo)?
+                // a: it seems like the intended behaviour is for tokenOne to always be USDC
+                // tokenTwo is passed as the asset (the Uniswap pool is WETH-tokenTwo)
             }));
         } else {
             revert VaultGuardiansBase__NotApprovedToken(address(token));
@@ -242,6 +245,8 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
                            PRIVATE FUNCTIONS
     //////////////////////////////////////////////////////////////*/
     function _quitGuardian(IERC20 token) private returns (uint256) {
+        // @audit: known issue here: vgTokens are not burned, therefore, a guardian can quit and 
+        // become a guardian again in an infinite loop, taking control of the DAO
         IVaultShares tokenVault = IVaultShares(s_guardians[msg.sender][token]);
         s_guardians[msg.sender][token] = IVaultShares(address(0));
         emit GaurdianRemoved(msg.sender, token);

@@ -117,30 +117,45 @@ contract VaultGuardiansBaseTest is Base_Test {
         vm.stopPrank();
     }
 
-    // @audit this test proves that there is a bug in VaultShares.sol, because the Uniswap liquidity token is the same for both weth-usdc and link-usdc
-    function testLinkLiquidityTokenWrong() public /*hasGuardian*/ { 
-        // usdc.mint(mintAmount, guardian);
-        // link.mint(mintAmount, guardian);
-        // vm.startPrank(guardian);
-        // usdc.approve(address(vaultGuardians), mintAmount);
-        // link.approve(address(vaultGuardians), mintAmount);
-
-        // address usdcVault = vaultGuardians.becomeTokenGuardian(allocationData, usdc);
-        // assertEq(address(vaultGuardians.getVaultFromGuardianAndToken(guardian, usdc)), usdcVault);
+    // @audit this test proves that there is a bug in VaultShares::deposit()
+    function testMoreSharesMintedThanExpected() public hasGuardian { 
+        // Initial state: guardian has 100% of shares
+        uint256 initialTotalSupply = wethVaultShares.totalSupply();
+        uint256 initialGuardianShares = wethVaultShares.balanceOf(guardian);
+        uint256 initialVaultGuardiansShares = wethVaultShares.balanceOf(address(vaultGuardians));
         
-        // address linkVault = vaultGuardians.becomeTokenGuardian(allocationData, link);
-        // assertEq(address(vaultGuardians.getVaultFromGuardianAndToken(guardian, link)), linkVault);
+        // User deposits assets
+        address user = makeAddr("user");
+        uint256 depositAmount = 10 ether;
+        weth.mint(depositAmount, user);
+        
+        vm.startPrank(user);
+        weth.approve(address(wethVaultShares), depositAmount);
+        
+        uint256 userSharesBefore = wethVaultShares.balanceOf(user);
+        uint256 guardianSharesBefore = wethVaultShares.balanceOf(guardian);
+        uint256 vaultGuardiansSharesBefore = wethVaultShares.balanceOf(address(vaultGuardians));
+        uint256 totalSupplyBefore = wethVaultShares.totalSupply();
+        
+        uint256 totalExpectedMintedShares = wethVaultShares.previewDeposit(depositAmount);
+        uint256 sharesReceivedByUser = wethVaultShares.deposit(depositAmount, user);
 
-        // assertEq(address(VaultShares(linkVault).getUniswapLiquidtyToken()), address(VaultShares(usdcVault).getUniswapLiquidtyToken()));
-        // vm.stopPrank();
+        vm.stopPrank();
 
-        // weth.mint(mintAmount, guardian);
-        // vm.startPrank(guardian);
-        // weth.approve(address(vaultGuardians), mintAmount);
-        // address wethVault = vaultGuardians.becomeGuardian(allocationData);
-        // wethVaultShares = VaultShares(wethVault);
-        // vm.stopPrank();
-        // console.log(address(wethVaultShares.getUniswapLiquidtyToken()));
+        uint256 guardianAndDaoCut = vaultGuardians.getGuardianAndDaoCut();
+        uint256 userSharesAfter = wethVaultShares.balanceOf(user);
+        uint256 totalSupplyAfter = wethVaultShares.totalSupply();
+        uint256 guardianSharesAfter = wethVaultShares.balanceOf(guardian);
+        uint256 vaultGuardiansSharesAfter = wethVaultShares.balanceOf(address(vaultGuardians));
+        uint256 sharesActuallyMinted = totalSupplyAfter - totalSupplyBefore;
+        uint256 expectedSharesReceivedByUser = totalExpectedMintedShares - 2 * (totalExpectedMintedShares / guardianAndDaoCut);
+
+        assertEq(guardianSharesAfter - guardianSharesBefore, sharesReceivedByUser / guardianAndDaoCut);
+        assertEq(vaultGuardiansSharesAfter - vaultGuardiansSharesBefore, sharesReceivedByUser / guardianAndDaoCut);
+        assertGt(sharesReceivedByUser, expectedSharesReceivedByUser);
+        assertEq(sharesActuallyMinted, sharesReceivedByUser + 2 * (sharesReceivedByUser / guardianAndDaoCut));
+        assertGt(sharesActuallyMinted, totalExpectedMintedShares);
+        assertGt(totalSupplyAfter, totalSupplyBefore + totalExpectedMintedShares);
     }
 
     modifier hasGuardian() {
