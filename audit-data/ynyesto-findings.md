@@ -67,6 +67,87 @@ The absence of performance fee logic suggests the protocol was either never comp
 
 ---
 
+### [C-2] DAO lacks core functionality promised in documentation
+
+**Description:** 
+
+The README claims the DAO is responsible for two critical functions:
+
+> "The DAO is responsible for:
+> - Updating pricing parameters
+> - Getting a cut of all performance of all guardians"
+
+However, **the second function does not exist in the protocol**:
+
+1. **"Updating pricing parameters"** - The DAO can update ✅:
+   - `s_guardianStakePrice` (stake amount to become guardian)
+   - `s_guardianAndDaoCut` (percentage cut from deposits)
+   
+2. **"Getting a cut of all performance of all guardians"** - This is completely missing ❌:
+   - No performance calculation logic exists
+   - No performance fee collection mechanism
+   - No way for the DAO to receive performance-based revenue
+   - The DAO only gets a fixed cut from deposits (not performance)
+
+**Impact:** 
+
+- **False advertising**: The protocol claims DAO functionality that doesn't exist
+- **Economic model broken**: The DAO cannot fulfill its stated purpose
+- **Value proposition false**: Users expect DAO governance that isn't implemented
+- **Protocol deception**: The documentation misleads users about DAO capabilities
+- **Missing revenue stream**: The DAO has no way to earn from guardian performance
+
+**Code Location:**
+
+```solidity
+// README.md claims:
+// "The DAO is responsible for:
+// - Updating pricing parameters
+// - Getting a cut of all performance of all guardians"
+
+// Reality - The DAO can only update these basic parameters:
+function updateGuardianStakePrice(uint256 newStakePrice) external onlyOwner {
+    s_guardianStakePrice = newStakePrice; // Only stake price
+}
+
+function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
+    s_guardianAndDaoCut = newCut; // Only deposit cut
+}
+
+// Missing: Performance fee logic, performance calculation, performance fee collection
+```
+
+**Root Cause:**
+
+The protocol documentation and implementation are completely misaligned. The DAO was described as having governance over pricing and performance fees, but the implementation only provides basic parameter updates for stake amounts and deposit cuts.
+
+**Recommended Mitigation:** 
+
+**Option 1: Implement missing DAO functionality (Recommended)**
+This requires significant development effort to:
+- Implement performance calculation and tracking
+- Create performance fee collection mechanisms
+- Connect the DAO to guardian performance
+
+**Option 2: Remove false claims**
+If the DAO functionality cannot be implemented:
+- Update README to accurately reflect what the DAO actually does
+- Remove claims about pricing parameter control
+- Remove claims about performance fee collection
+- Clarify the actual limited scope of DAO control
+
+**Option 3: Implement simplified DAO model**
+Instead of performance-based fees, implement:
+- Fixed management fees
+- Time-based fees
+- Flat protocol fees
+- Clear governance over basic parameters
+
+**Critical Note:** This is not a simple feature gap - it's a fundamental disconnect between the protocol's stated value proposition and its actual implementation. The DAO cannot fulfill its documented responsibilities, making this a critical issue that affects the entire protocol's credibility and functionality.
+
+The current implementation suggests the DAO was either never intended to have these powers or the development team abandoned the governance features without updating the documentation.
+
+
 ### [H-1] The constructor of `VaultShares` tries to get LP tokens from non-existent WETH/WETH Uniswap pools when the asset of the vault is WETH, which breaks the `divestThenInvest` modifier.
 
 **Description:** 
