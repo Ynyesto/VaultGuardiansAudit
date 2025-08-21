@@ -55,7 +55,7 @@ _mint(i_guardian, shares / i_guardianAndDaoCut);        // 0.1% of shares
 _mint(i_vaultGuardians, shares / i_guardianAndDaoCut);  // 0.1% of shares
 ```
 
-This means that (with the default s_guardianAndDaoCut) for every deposit:
+This means that (with the default s_guardianAndDaoCut = 1000) for every deposit:
 - User gets 100% of the shares they should get
 - Guardian gets 0.1% extra shares  
 - DAO gets 0.1% extra shares
@@ -219,6 +219,143 @@ succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap);
 
 ---
 
+---
+
+### [L-2] Naive liquidity calculation in `UniswapAdapter` makes balanced liquidity addition leave small amounts of the asset in the `UniswapAdapter` contract due to not accounting for price impact, slippage and fees.
+
+**Description:** 
+
+The `_uniswapInvest()` function in `UniswapAdapter` uses a fundamentally flawed approach for adding liquidity:
+
+```solidity
+// We will do half in WETH and half in the token
+uint256 amountOfTokenToSwap = amount / 2;
+```
+
+The function attempts to create a 50/50 liquidity pool by:
+1. Swapping half the input token for the counter-party token
+2. Adding liquidity with the remaining half + the swapped amount
+
+However, with this approach is mathematically impossible to achieve balanced liquidity because it doesn't account for:
+
+- **Swap fees**: Uniswap charges 1%, 0.3% or 0.05% fees on swaps, reducing the output amount
+- **Price impact**: The swap itself moves the price, affecting the optimal liquidity ratio
+- **Slippage**: The actual swap output may differ from the expected amount
+
+**Impact:** 
+
+- **Impossible liquidity ratios**: The protocol cannot create truly balanced 50/50 pools
+- **Protocol failure**: The core liquidity provision mechanism is fundamentally broken
+- **User fund loss**: Depositors receive suboptimal LP positions
+
+**Proof of Concept:**
+
+Consider adding liquidity to a WETH/USDC pool:
+
+1. User deposits 1000 USDC
+2. Protocol swaps 500 USDC for WETH
+3. Due to 0.3% fee + price impact + slippage, it receives less than $500 worth of WETH 
+4. Protocol adds liquidity with: 500 USDC + (WETH received)
+5. Result: Some USDC is left in the contract because there wasn't enough WETH to match it.
+
+**Code Location:**
+
+```solidity
+// Line 41: Flawed liquidity calculation
+uint256 amountOfTokenToSwap = amount / 2;
+
+// Lines 77-78: Impossible to achieve balanced liquidity
+amountADesired: amountOfTokenToSwap + amounts[0], 
+amountBDesired: amounts[1],
+```
+
+**Recommended Mitigation:** 
+
+Implement proper liquidity calculation that accounts for fees and price impact:
+
+```solidity
+function _uniswapInvest(IERC20 tokenIn, uint256 amountIn) internal {
+    IERC20 tokenOut = tokenIn == i_weth ? i_tokenOne : i_weth;
+
+    // 1) Get the pair and reserves (ordered per token0/token1)
+    address pair = IUniswapV2Factory(i_uniswapRouter.factory()).getPair(address(tokenIn), address(tokenOut));
+    require(pair != address(0), "No pair");
+    (uint112 r0, uint112 r1,) = IUniswapV2Pair(pair).getReserves();
+
+    (uint rIn, uint rOut) =
+        address(tokenIn) == IUniswapV2Pair(pair).token0()
+            ? (uint(r0), uint(r1))
+            : (uint(r1), uint(r0));
+
+    // 2) Compute optimal x to swap from tokenIn -> tokenOut
+    uint x = _optimalSwapIn(amountIn, rIn);
+
+    // 3) Swap exactly x with a sane minOut (e.g., 0.5% slippage guard)
+    tokenIn.approve(address(i_uniswapRouter), x);
+    address[] memory path = new address[](2);
+    path[0] = address(tokenIn);
+    path[1] = address(tokenOut);
+
+    uint yExpected = UniswapV2Library.getAmountOut(x, rIn, rOut);
+    uint yMin = (yExpected * 995) / 1000; // 0.5% slippage example
+
+    uint[] memory amounts = i_uniswapRouter.swapExactTokensForTokens(
+        x,
+        yMin,
+        path,
+        address(this),
+        block.timestamp
+    );
+
+    uint amountTokenA = amountIn - x;   // leftover of tokenIn after swap
+    uint amountTokenB = amounts[1];     // tokenOut received
+
+    // 4) Add liquidity with non-zero mins (protect vs MEV)
+    tokenIn.approve(address(i_uniswapRouter), amountTokenA);
+    tokenOut.approve(address(i_uniswapRouter), amountTokenB);
+
+    // Optional: small slippage guard on LP add (e.g., allow 0.5% imbalance)
+    uint amountAMin = (amountTokenA * 995) / 1000;
+    uint amountBMin = (amountTokenB * 995) / 1000;
+
+    (uint aUsed, uint bUsed, uint liq) = i_uniswapRouter.addLiquidity(
+        address(tokenIn),
+        address(tokenOut),
+        amountTokenA,
+        amountTokenB,
+        amountAMin,
+        amountBMin,
+        address(this),
+        block.timestamp
+    );
+
+    // 5) Sweep any tiny leftovers if you care (could send back to owner/treasury)
+    // uint aLeft = amountTokenA - aUsed;
+    // uint bLeft = amountTokenB - bUsed;
+    // if (aLeft > 0) tokenIn.safeTransfer(treasury, aLeft);
+    // if (bLeft > 0) tokenOut.safeTransfer(treasury, bLeft);
+
+    emit UniswapInvested(aUsed, bUsed, liq);
+}
+
+// See Babylonian::sqrt() at https://github.com/Uniswap/solidity-lib/blob/master/contracts/libraries/Babylonian.sol
+function _optimalSwapIn(uint a, uint rIn) internal pure returns (uint) {
+    // constants for 0.3% fee (γ = 0.997)
+    uint numerator = Babylonian.sqrt(rIn * (a * 3988000 + rIn * 3988009)) - (rIn * 1997);
+    return numerator / 1994;
+}
+```
+
+**Key Improvements:**
+
+1. **Mathematical precision**: Uses the optimal swap amount formula that accounts for Uniswap's 0.3% fee
+2. **Slippage protection**: Implements 0.5% slippage guards on both swap and liquidity addition
+3. **Reserve handling**: Correctly calculates reserves considering token ordering
+4. **Leftover management**: Can sweep leftover tokens to treasury/owner
+5. **MEV protection**: Non-zero minimum amounts prevent sandwich attacks
+
+This approach ensures that the protocol creates the most balanced liquidity pools possible while protecting users from excessive slippage and MEV attacks.
+
 ### [I-1] Incorrect comment in `UniswapAdapter._uniswapInvest()` function
 
 **Description:** 
@@ -253,8 +390,7 @@ Fix the comment to accurately reflect the logic:
 
 ---
 
-
-### [I-3] Misleading comment about `amounts[1]` in `UniswapAdapter._uniswapInvest()` function
+### [I-2] Misleading comment about `amounts[1]` in `UniswapAdapter._uniswapInvest()` function
 
 **Description:** 
 

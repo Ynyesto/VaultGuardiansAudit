@@ -39,6 +39,9 @@ contract UniswapAdapter is AStaticUSDCData {
         IERC20 counterPartyToken = token == i_weth ? i_tokenOne : i_weth;
         // We will do half in WETH and half in the token
         uint256 amountOfTokenToSwap = amount / 2;
+        // @audit-high: USDC has only 6 decimals, while WETH has 18 decimals
+        // WBTC has 8 decimals... basically any unusual ERC20 that doesn't have 18 decimals will be problematic
+        
         // the path array is supplied to the Uniswap router, which allows us to create swap paths
         // in case a pool does not exist for the input token and the output token
         // however, in this case, we are sure that a swap path exists for all pair permutations of WETH, USDC and LINK
