@@ -92,6 +92,7 @@ contract VaultGuardians is Ownable, VaultGuardiansBase {
      */
     function sweepErc20s(IERC20 asset) external {
         uint256 amount = asset.balanceOf(address(this));
+        // @audit-medium: the funds are not deposited in this contract but in VaultShares contracts!!
         emit VaultGuardians__SweptTokens(address(asset));
         asset.safeTransfer(owner(), amount);
     }

@@ -269,6 +269,8 @@ amountADesired: amountOfTokenToSwap + amounts[0],
 amountBDesired: amounts[1],
 ```
 
+**Note:** This appears to be a known issue in the protocol. The `VaultGuardians` contract includes a `sweepErc20s()` function specifically designed to collect "little bits left around from swapping or rounding errors" and transfer them to the DAO. This suggests the developers were aware that the current liquidity calculation approach would leave leftover tokens in contracts. However, this function is fundamentally flawed because it can only sweep tokens from the `VaultGuardians` contract itself, while user funds and any leftover tokens from Uniswap operations are stored in individual `VaultShares` contracts.
+
 **Recommended Mitigation:** 
 
 Implement proper liquidity calculation that accounts for fees and price impact:
@@ -355,6 +357,103 @@ function _optimalSwapIn(uint a, uint rIn) internal pure returns (uint) {
 5. **MEV protection**: Non-zero minimum amounts prevent sandwich attacks
 
 This approach ensures that the protocol creates the most balanced liquidity pools possible while protecting users from excessive slippage and MEV attacks.
+
+---
+
+### [M-3] `sweepErc20s` function in `VaultGuardians` is fundamentally flawed and cannot fulfill its intended purpose
+
+**Description:** 
+
+The `VaultGuardians` contract includes a `sweepErc20s()` function that claims to collect "little bits left around from swapping or rounding errors":
+
+```solidity
+/*
+ * @notice Any excess ERC20s can be scooped up by the DAO. 
+ * @notice This is often just little bits left around from swapping or rounding errors
+ * @dev Since this is owned by the DAO, the funds will always go to the DAO. 
+ * @param asset The ERC20 to sweep
+ */
+function sweepErc20s(IERC20 asset) external {
+    uint256 amount = asset.balanceOf(address(this));
+    emit VaultGuardians__SweptTokens(address(asset));
+    asset.safeTransfer(owner(), amount);
+}
+```
+
+However, this function has a critical architectural flaw: **it can only sweep tokens from the `VaultGuardians` contract itself, but user funds and leftover tokens from Uniswap operations are stored in individual `VaultShares` contracts**.
+
+**Impact:** 
+
+- **Function is ineffective**: The sweep function cannot collect the "dust" it's designed to collect
+- **Misleading documentation**: The comment suggests it will collect leftover tokens from swaps, but it cannot
+- **Wasted gas**: DAO calls to this function will always return 0 (no tokens to sweep)
+- **Architectural confusion**: Suggests the developers didn't understand their own protocol design
+
+**Root Cause:**
+
+The protocol architecture separates concerns incorrectly:
+
+1. **`VaultGuardians`** - Protocol entry point and DAO control (doesn't hold user funds)
+2. **`VaultShares`** - Individual vaults that hold user deposits and leftover tokens
+3. **`UniswapAdapter`** - Operates within `VaultShares` contracts, leaving dust there
+
+The `holdAllocation` portion of user deposits (which could be 100% of deposits) never leaves the `VaultShares` contract:
+
+```solidity
+// src/protocol/VaultShares.sol _investFunds function
+function _investFunds(uint256 assets) private {
+    uint256 uniswapAllocation = (assets * s_allocationData.uniswapAllocation) / ALLOCATION_PRECISION;
+    uint256 aaveAllocation = (assets * s_allocationData.aaveAllocation) / ALLOCATION_PRECISION;
+
+    _uniswapInvest(IERC20(asset()), uniswapAllocation);
+    _aaveInvest(IERC20(asset()), aaveAllocation);
+    // holdAllocation is NEVER invested anywhere - it stays in VaultShares!
+}
+```
+
+**Code Location:**
+
+```solidity
+// src/protocol/VaultGuardians.sol
+function sweepErc20s(IERC20 asset) external {
+    uint256 amount = asset.balanceOf(address(this)); // Only checks VaultGuardians balance
+    asset.safeTransfer(owner(), amount);
+}
+
+// src/protocol/VaultShares.sol
+function _investFunds(uint256 assets) private {
+    // holdAllocation portion stays in VaultShares as underlying asset
+    // Uniswap dust also stays in VaultShares
+}
+```
+
+**Recommended Mitigation:** 
+
+**Option 1: Remove the misleading function entirely (Recommended)**
+Since the function cannot fulfill its intended purpose and any implementation would either be ineffective or dangerous, remove it completely to avoid confusion.
+
+**Option 2: Implement safe sweeping with user allocation tracking**
+If sweep functionality is truly needed, the contract must keep track of users' hold allocations to ensure only dust (tokens that exceed user deposits) can be swept:
+
+```solidity
+function sweepExcessTokens(IERC20 asset) external onlyOwner {
+    uint256 totalUserHoldAllocations = getTotalUserHoldAllocations(asset);
+    uint256 currentBalance = asset.balanceOf(address(this));
+    
+    require(currentBalance > totalUserHoldAllocations, "No excess tokens");
+    uint256 excessAmount = currentBalance - totalUserHoldAllocations;
+    
+    asset.safeTransfer(owner(), excessAmount);
+}
+```
+
+This approach requires tracking the total `holdAllocation` amounts in vaults to ensure user funds are never swept.
+
+**Note:** The existing test `testSweepErc20s()` in `VaultGuardiansTest.t.sol` is misleading because it artificially transfers tokens to the `VaultGuardians` contract, which doesn't happen in normal protocol usage. In reality, user funds are deposited into `VaultShares` contracts by calling the `deposit()` function, making the sweep function ineffective.
+
+The current implementation suggests the developers didn't fully understand their own protocol architecture, making this a significant design flaw that renders the sweep functionality completely ineffective.
+
+---
 
 ### [I-1] Incorrect comment in `UniswapAdapter._uniswapInvest()` function
 
