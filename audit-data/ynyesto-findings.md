@@ -470,14 +470,16 @@ If these interfaces are meant for future use, add TODO comments explaining their
 
 **Description:** 
 
-The `AStaticUSDCData.sol` contract uses the generic variable name `i_tokenOne` when it's specifically designed to work with USDC:
+The `AStaticUSDCData.sol` contract uses generic variable and constant names when it's specifically designed to work with USDC:
 
 ```solidity
 // Intended to be USDC
 IERC20 internal immutable i_tokenOne;
+string public constant TOKEN_ONE_VAULT_NAME = "Vault Guardian USDC";
+string public constant TOKEN_ONE_VAULT_SYMBOL = "vgUSDC";
 ```
 
-However, throughout the codebase, this variable is consistently used as if it were USDC, and the constructor parameter is even named `usdc` in some places. The generic name `i_tokenOne` is misleading and doesn't reflect the actual intended behavior.
+However, throughout the codebase, these variables are consistently used as if they were USDC, and the constructor parameter is even named `usdc` in some places. The generic names `i_tokenOne`, `TOKEN_ONE_VAULT_NAME`, and `TOKEN_ONE_VAULT_SYMBOL` are misleading and don't reflect the actual intended behavior.
 
 **Impact:** 
 
@@ -492,8 +494,9 @@ However, throughout the codebase, this variable is consistently used as if it we
 // src/abstract/AStaticUSDCData.sol
 // Intended to be USDC
 IERC20 internal immutable i_tokenOne;
+string public constant TOKEN_ONE_VAULT_NAME = "Vault Guardian USDC";
+string public constant TOKEN_ONE_VAULT_SYMBOL = "vgUSDC";
 
-// Used throughout the codebase as if it were USDC
 constructor(address weth, address tokenOne) AStaticWethData(weth) {
     i_tokenOne = IERC20(tokenOne); 
 }
@@ -501,11 +504,13 @@ constructor(address weth, address tokenOne) AStaticWethData(weth) {
 
 **Recommended Mitigation:** 
 
-Rename the variable to clearly indicate its purpose:
+Rename the variable and constants to clearly indicate their purpose:
 
 ```solidity
 // Change from generic to specific
 IERC20 internal immutable i_usdc;
+string public constant USDC_VAULT_NAME = "Vault Guardian USDC";
+string public constant USDC_VAULT_SYMBOL = "vgUSDC";
 
 constructor(address weth, address usdc) AStaticWethData(weth) {
     i_usdc = IERC20(usdc);
@@ -572,3 +577,73 @@ Alternatively, if the comment refers to the entire inheritance chain (WETH + USD
 ```
 
 This eliminates confusion and makes the code more maintainable.
+
+---
+
+### [I-6] Hardcoded LINK values in `AStaticTokenData.sol` contradict the contract's generic design
+
+**Description:** 
+
+The `AStaticTokenData.sol` contract is designed to be generic and work with any token, but it contains hardcoded LINK-specific values that contradict this design:
+
+```solidity
+// Intended to be LINK
+IERC20 internal immutable i_tokenTwo;
+string public constant TOKEN_TWO_VAULT_NAME = "Vault Guardian LINK";
+string public constant TOKEN_TWO_VAULT_SYMBOL = "vgLINK";
+```
+
+The contract's generic design allows it to work with LINK or any other tokens that may be added in the future, but the hardcoded vault name and symbol are specifically tied to LINK. This creates a contradiction between the contract's intended flexibility and its actual implementation.
+
+**Impact:** 
+
+- **Design inconsistency**: The contract claims to be generic but has token-specific hardcoded values
+- **Limited flexibility**: Adding new tokens requires code changes instead of just constructor parameters
+- **Maintenance overhead**: Future token additions require editing the hardcoded names.
+- **Architectural confusion**: The contract structure suggests flexibility but the implementation is rigid
+
+**Code Location:**
+
+```solidity
+// src/abstract/AStaticTokenData.sol
+// Intended to be LINK
+IERC20 internal immutable i_tokenTwo;
+string public constant TOKEN_TWO_VAULT_NAME = "Vault Guardian LINK";
+string public constant TOKEN_TWO_VAULT_SYMBOL = "vgLINK";
+
+constructor(address weth, address tokenOne, address tokenTwo) AStaticUSDCData(weth, tokenOne) {
+    i_tokenTwo = IERC20(tokenTwo);
+}
+```
+
+**Recommended Mitigation:** 
+
+Make the vault name and symbol configurable through the constructor to maintain the contract's generic design:
+
+```solidity
+abstract contract AStaticTokenData is AStaticUSDCData {
+    IERC20 internal immutable i_tokenTwo;
+    string public immutable i_tokenTwoVaultName;
+    string public immutable i_tokenTwoVaultSymbol;
+
+    constructor(
+        address weth, 
+        address tokenOne, 
+        address tokenTwo,
+        string memory vaultName,
+        string memory vaultSymbol
+    ) AStaticUSDCData(weth, tokenOne) {
+        i_tokenTwo = IERC20(tokenTwo);
+        i_tokenTwoVaultName = vaultName;
+        i_tokenTwoVaultSymbol = vaultSymbol;
+    }
+
+    function getTokenTwo() external view returns (IERC20) {
+        return i_tokenTwo;
+    }
+}
+```
+
+This approach maintains the contract's generic nature while allowing each deployment to specify appropriate vault metadata for whatever token is being used.
+
+---

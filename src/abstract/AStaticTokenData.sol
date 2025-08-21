@@ -7,7 +7,7 @@ import {AStaticUSDCData} from "./AStaticUSDCData.sol";
 abstract contract AStaticTokenData is AStaticUSDCData { // a: tokenOne is meant to always be USDC, but it is not enforced
     // Intended to be LINK
     IERC20 internal immutable i_tokenTwo;
-    // @audit-info this is opinionated to LINK even though the name of the interface isn't
+    // @audit-info this is opinionated to LINK even though the name of the interface isn't, these should be immutable variables set in the constructor.
     string public constant TOKEN_TWO_VAULT_NAME = "Vault Guardian LINK";
     string public constant TOKEN_TWO_VAULT_SYMBOL = "vgLINK";
 
