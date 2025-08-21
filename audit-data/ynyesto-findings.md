@@ -647,3 +647,52 @@ abstract contract AStaticTokenData is AStaticUSDCData {
 This approach maintains the contract's generic nature while allowing each deployment to specify appropriate vault metadata for whatever token is being used.
 
 ---
+
+### [I-7] Inconsistent inheritance hierarchy for static token data
+
+**Description:**
+
+The protocol defines static token references through a chain of abstract contracts:
+
+```solidity
+// Chain 1: VaultGuardiansBase
+AStaticWethData → AStaticUSDCData → AStaticTokenData → VaultGuardiansBase
+
+// Chain 2: UniswapAdapter
+AStaticWethData → AStaticUSDCData → UniswapAdapter
+```
+
+This creates two different inheritance paths for similar functionality.
+- **VaultGuardiansBase** inherits from `AStaticTokenData` and therefore has access to:
+  - `i_weth` (from AStaticWethData)
+  - `i_tokenOne` (from AStaticUSDCData)
+  - `i_tokenTwo` (from AStaticTokenData)
+- **UniswapAdapter** inherits only from `AStaticUSDCData`, so it only has access to:
+  - `i_weth`
+  - `i_tokenOne`
+
+**Impact:**
+
+- **Architectural inconsistency**: Different parts of the system expose different subsets of tokens despite similar naming and structure.
+- **Maintainability risk**: Adding or changing token definitions requires reasoning about which contracts "see" which tokens.
+- **Onboarding confusion**: The inheritance chain suggests all contracts share a consistent token model, but they don't.
+
+This is not a direct security risk, but it increases the complexity of understanding and maintaining the system.
+
+**Code Location:**
+
+```solidity
+// src/protocol/investableUniverseAdapters/UniswapAdapter.sol
+contract UniswapAdapter is AStaticUSDCData { // Only gets i_weth + i_tokenOne
+
+// src/protocol/VaultGuardiansBase.sol  
+contract VaultGuardiansBase is AStaticTokenData, IVaultData { // Gets i_weth + i_tokenOne + i_tokenTwo
+```
+
+**Recommended Mitigation:**
+
+Unify the inheritance approach so contracts follow a consistent token model. Options include:
+
+1. **Consistent inheritance**: Have all contracts inherit from `AStaticTokenData`, ignoring unused tokens where not needed.
+2. **Restructure layers**: Split tokens into clear hierarchies (e.g., CoreTokens for WETH+USDC, ExtendedTokens for LINK and beyond).
+3. **Composition over inheritance**: Pass required tokens via constructor parameters instead of through an inheritance chain.
