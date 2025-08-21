@@ -147,6 +147,7 @@ Instead of performance-based fees, implement:
 
 The current implementation suggests the DAO was either never intended to have these powers or the development team abandoned the governance features without updating the documentation.
 
+---
 
 ### [H-1] The constructor of `VaultShares` tries to get LP tokens from non-existent WETH/WETH Uniswap pools when the asset of the vault is WETH, which breaks the `divestThenInvest` modifier.
 
@@ -1087,3 +1088,102 @@ Either:
 If these errors are meant for future use, document their intended purpose and timeline for implementation. Otherwise, remove them to clean up the codebase.
 
 ---
+
+### [I-11] Function ordering violates Solidity style guide recommendations
+
+**Description:** 
+
+The `VaultShares.sol` contract does not follow the recommended Solidity style guide for function ordering. Functions are mixed between public and private visibility, making the code harder to read and maintain.
+
+**Current Ordering Issues:**
+
+1. **Mixed visibility**: Public functions like `setNotActive()` and `updateHoldingAllocation()` are scattered between private functions like `_investFunds()`
+2. **Inconsistent grouping**: The `deposit()` function is placed after private functions, breaking the logical flow
+
+**Impact:** 
+
+- **Reduced readability**: Developers must scan the entire contract to find functions of a specific type
+- **Maintenance difficulty**: Code organization doesn't follow established conventions
+- **Onboarding confusion**: New developers expect standard Solidity ordering
+- **Code review complexity**: Reviewers must mentally reorganize the code structure
+
+**Code Location:**
+
+```solidity
+// src/protocol/VaultShares.sol - Current mixed ordering:
+
+// Public functions scattered throughout:
+function setNotActive() public onlyVaultGuardians isActive { ... }
+function updateHoldingAllocation(AllocationData memory tokenAllocationData) public onlyVaultGuardians isActive { ... }
+
+// Private function mixed in:
+function _investFunds(uint256 assets) private { ... }
+
+// Public function after private:
+function deposit(uint256 assets, address receiver) public override(ERC4626, IERC4626) { ... }
+
+// More private functions:
+function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
+
+// View functions at the end instead of grouped:
+function getGuardian() external view returns (address) { ... }
+function getGuardianAndDaoCut() external view returns (uint256) { ... }
+```
+
+**Recommended Mitigation:** 
+
+**Reorganize following Solidity style guide (Recommended)**
+Restructure functions in this order and add clear section headers:
+1. **Constructor**
+2. **Receive/Fallback functions** (if any)
+3. **External functions**
+4. **Public functions**
+5. **Internal functions**
+6. **Private functions**
+7. **View/Pure functions**
+
+The current ordering makes the contract harder to understand and maintain, especially for developers familiar with Solidity conventions.
+
+---
+
+### [I-12] Interface implementation inconsistency between VaultShares and IVaultShares
+
+**Description:** 
+
+The `VaultShares.sol` contract implements several public and external functions that are not declared in the `IVaultShares.sol` interface, making it incomplete.
+
+**Missing Interface Declarations:**
+
+- **Investment management**: `rebalanceFunds`
+- **View functions**: All getters like `getGuardian`, `getIsActive`, etc.
+
+**Note:** Core vault functions like `deposit`, `withdraw`, and `redeem` are inherited from `IERC4626` and don't need to be redeclared.
+
+**Impact:** 
+
+- **Incomplete interface**: The implementation doesn't match its declared interface
+- **Reduced code clarity**: Developers can't rely on the interface to understand available functions
+- **Testing complexity**: Mock contracts based on the interface won't have all necessary functions
+
+**Code Location:**
+
+```solidity
+// src/interfaces/IVaultShares.sol - Only declares:
+interface IVaultShares is IERC4626, IVaultData {
+    function updateHoldingAllocation(AllocationData memory tokenAllocationData) external;
+    function setNotActive() external;
+    // Missing: deposit, withdraw, redeem, rebalanceFunds, and all getters
+}
+
+// src/protocol/VaultShares.sol - Implements many more functions:
+contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, ReentrancyGuard {
+    // These functions exist but aren't in the interface:
+    function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
+    function getGuardian() external view returns (address) { ... }
+    // ... and many more getters
+}
+```
+
+**Recommended Mitigation:** 
+
+**Expand the interface** to include all public and external functions.
