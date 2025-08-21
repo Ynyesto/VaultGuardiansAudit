@@ -795,3 +795,145 @@ Unify the inheritance approach so contracts follow a consistent token model. Opt
 1. **Consistent inheritance**: Have all contracts inherit from `AStaticTokenData`, ignoring unused tokens where not needed.
 2. **Restructure layers**: Split tokens into clear hierarchies (e.g., CoreTokens for WETH+USDC, ExtendedTokens for LINK and beyond).
 3. **Composition over inheritance**: Pass required tokens via constructor parameters instead of through an inheritance chain.
+
+---
+
+### [I-8] Unnecessary contract separation creates architectural complexity
+
+**Description:** 
+
+The protocol unnecessarily separates functionality between `VaultGuardians.sol` and `VaultGuardiansBase.sol`:
+
+- **`VaultGuardians`** inherits from `VaultGuardiansBase` and `Ownable`, but only adds:
+  - `updateGuardianStakePrice()` function
+  - `updateGuardianAndDaoCut()` function  
+  - `sweepErc20s()` function (which is fundamentally flawed)
+- **`VaultGuardiansBase`** contains all the core protocol logic
+
+This separation adds unnecessary complexity without providing any architectural benefits. The `VaultGuardians` contract serves no purpose beyond being a thin wrapper that could easily be integrated into the base contract.
+
+**Impact:** 
+
+- **Unnecessary complexity**: Two contracts instead of one for no clear reason
+- **Maintenance overhead**: Changes require updates in multiple contracts
+- **Architectural confusion**: Unclear why the separation exists
+
+**Code Location:**
+
+```solidity
+// src/protocol/VaultGuardians.sol
+contract VaultGuardians is Ownable, VaultGuardiansBase {
+    // Only adds 3 functions, all of which could be in VaultGuardiansBase
+}
+
+// src/protocol/VaultGuardiansBase.sol  
+contract VaultGuardiansBase is AStaticTokenData, IVaultData {
+    // Contains all the actual protocol logic
+}
+```
+
+**Recommended Mitigation:** 
+
+Consolidate the contracts by:
+1. **Renaming** `VaultGuardiansBase` to `VaultGuardians`
+2. **Making** `VaultGuardians` inherit from `Ownable` directly
+3. **Moving** the three functions from the current `VaultGuardians` into the renamed base contract
+4. **Removing** the unnecessary `VaultGuardians.sol` file
+
+This simplifies the architecture while maintaining all functionality.
+
+---
+
+### [I-9] Wrong event emitted in `updateGuardianAndDaoCut` function
+
+**Description:** 
+
+The `updateGuardianAndDaoCut` function in `VaultGuardians.sol` emits the wrong event:
+
+```solidity
+function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
+    s_guardianAndDaoCut = newCut;
+    emit VaultGuardians__UpdatedStakePrice(s_guardianAndDaoCut, newCut); // WRONG EVENT!
+}
+```
+
+The function updates the guardian and DAO cut percentage, but it emits `VaultGuardians__UpdatedStakePrice` instead of the appropriate `VaultGuardians__UpdatedGuardianAndDaoCut` which isn't even defined.
+
+**Impact:** 
+
+- **Misleading events**: Event logs don't accurately reflect what was updated
+- **Monitoring confusion**: External systems monitoring events will receive incorrect information
+- **Audit complexity**: Event logs don't match the actual function behavior
+- **Code inconsistency**: The wrong event name suggests the function updates stake price, not fees
+
+**Code Location:**
+
+```solidity
+// src/protocol/VaultGuardians.sol
+event VaultGuardians__UpdatedStakePrice(uint256 oldStakePrice, uint256 newStakePrice);
+event VaultGuardians__UpdatedFee(uint256 oldFee, uint256 newFee);
+
+function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
+    s_guardianAndDaoCut = newCut;
+    emit VaultGuardians__UpdatedStakePrice(s_guardianAndDaoCut, newCut); // Should be UpdatedFee
+}
+```
+
+**Recommended Mitigation:** 
+
+Define the correct event and fix the event emission to use it:
+
+```solidity
+event VaultGuardians__UpdatedGuardianAndDaoCut(uint256 oldCut, uint256 newCut);
+
+function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
+    uint256 oldCut = s_guardianAndDaoCut;
+    s_guardianAndDaoCut = newCut;
+    emit VaultGuardians__UpdatedGuardianAndDaoCut(oldCut, newCut); // Correct event
+}
+```
+
+---
+
+### [I-10] Multiple unused error definitions create code clutter
+
+**Description:** 
+
+Several error definitions in the protocol are never thrown, creating unnecessary code:
+
+1. **`VaultGuardians__TransferFailed`** in `VaultGuardians.sol` - Never used
+2. **`VaultGuardiansBase__NotEnoughWeth`** in `VaultGuardiansBase.sol` - Never thrown
+3. **`VaultGuardiansBase__CantQuitGuardianWithNonWethVaults`** in `VaultGuardiansBase.sol` - Never thrown  
+4. **`VaultGuardiansBase__FeeTooSmall`** in `VaultGuardiansBase.sol` - Never thrown
+
+These unused errors suggest incomplete implementation or abandoned features, making the code harder to understand and maintain.
+
+**Impact:** 
+
+- **Code clutter**: Unnecessary error definitions that serve no purpose
+- **Maintenance confusion**: Developers may think these errors are used somewhere
+- **Audit complexity**: Auditors must determine if these are intentional or oversight
+- **Protocol clarity**: Suggests incomplete or evolving design
+
+**Code Location:**
+
+```solidity
+// src/protocol/VaultGuardians.sol
+error VaultGuardians__TransferFailed(); // Never used
+
+// src/protocol/VaultGuardiansBase.sol
+error VaultGuardiansBase__NotEnoughWeth(uint256 amount, uint256 amountNeeded); // Never thrown
+error VaultGuardiansBase__CantQuitGuardianWithNonWethVaults(address guardianAddress); // Never thrown
+error VaultGuardiansBase__FeeTooSmall(uint256 fee, uint256 requiredFee); // Never thrown
+```
+
+**Recommended Mitigation:** 
+
+Either:
+1. **Remove unused errors** if they're not needed
+2. **Implement the missing functionality** if these errors represent intended features
+3. **Add TODO comments** explaining why these errors exist but are unused
+
+If these errors are meant for future use, document their intended purpose and timeline for implementation. Otherwise, remove them to clean up the codebase.
+
+---
