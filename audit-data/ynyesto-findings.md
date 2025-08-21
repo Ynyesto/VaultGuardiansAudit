@@ -517,3 +517,58 @@ function getUsdc() external view returns (IERC20) {
 ```
 
 This makes the code more self-documenting and eliminates confusion about the variable's intended purpose.
+
+---
+
+### [I-5] Misleading comment in `AStaticWethData.sol` references non-existent tokens
+
+**Description:** 
+
+The `AStaticWethData.sol` contract contains a confusing comment that suggests it defines multiple tokens:
+
+```solidity
+// The following four tokens are the approved tokens the protocol accepts
+// The default values are for Mainnet
+```
+
+However, this contract only defines one token (`i_weth`) and its associated constants. The comment about "four tokens" is misleading and doesn't match the actual implementation.
+
+**Impact:** 
+
+- **Developer confusion**: The comment suggests there should be four tokens defined in this contract
+- **Code inconsistency**: The comment doesn't match the actual code structure
+- **Maintenance issues**: Future developers might look for missing token definitions
+- **Audit complexity**: Auditors must determine if tokens are missing or if the comment is wrong
+
+**Code Location:**
+
+```solidity
+// src/abstract/AStaticWethData.sol
+// The following four tokens are the approved tokens the protocol accepts
+// The default values are for Mainnet
+IERC20 internal immutable i_weth;
+// slither-disable-next-line unused-state
+string internal constant WETH_VAULT_NAME = "Vault Guardian WETH";
+// slither-disable-next-line unused-state
+string internal constant WETH_VAULT_SYMBOL = "vgWETH";
+```
+
+**Recommended Mitigation:** 
+
+Update the comment to accurately reflect what the contract actually defines:
+
+```solidity
+// This contract defines the WETH token and its associated vault metadata
+// The default values are for Mainnet
+IERC20 internal immutable i_weth;
+```
+
+Alternatively, if the comment refers to the entire inheritance chain (WETH + USDC + LINK), clarify this:
+
+```solidity
+// This contract defines the WETH token. Combined with child contracts,
+// the protocol accepts WETH, USDC, and LINK as approved tokens.
+// The default values are for Mainnet
+```
+
+This eliminates confusion and makes the code more maintainable.
