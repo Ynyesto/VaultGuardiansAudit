@@ -1,3 +1,72 @@
+
+### [C-1] Complete absence of performance fee logic despite protocol claims
+
+**Description:** 
+
+The protocol documentation and code structure claim that vault guardians charge performance fees, but **zero logic exists to implement this core functionality**:
+
+**From README.md:**
+> "Vault guardians charge a performance fee, the better the guardians do, the larger fee they will earn."
+
+**From the code:**
+- `GUARDIAN_FEE` constant is defined but never used
+- `VaultGuardians__UpdatedFee` event is defined but never emitted
+- No performance calculation logic exists
+- No fee collection mechanism exists
+- No fee distribution logic exists
+
+**Impact:** 
+
+- **Protocol deception**: Users are led to believe guardians earn performance fees, but they don't
+- **Economic model broken**: The core incentive mechanism for guardians is completely missing
+- **Value proposition false**: The protocol cannot deliver on its stated economic model
+- **Guardian motivation**: Without performance fees, guardians have no incentive to maximize vault performance
+- **User expectations**: Depositors expect guardians to be incentivized to perform well
+
+**Code Location:**
+
+```solidity
+// src/protocol/VaultGuardiansBase.sol
+uint256 private constant GUARDIAN_FEE = 0.1 ether; // Defined but NEVER used
+
+// src/protocol/VaultGuardians.sol  
+event VaultGuardians__UpdatedFee(uint256 oldFee, uint256 newFee); // Defined but NEVER emitted
+```
+
+**Root Cause:**
+
+The protocol appears to be incomplete or abandoned during development. The performance fee system was:
+1. **Documented** in the README as a core feature
+2. **Partially coded** with constants and events
+3. **Never implemented** with actual logic
+
+**Recommended Mitigation:** 
+
+**Option 1: Implement complete performance fee system (Recommended)**
+This requires significant development effort to:
+- Calculate vault performance over time
+- Implement fee collection mechanisms
+- Distribute fees to guardians and DAO
+- Handle fee withdrawal and accounting
+
+**Option 2: Remove misleading claims**
+If performance fees cannot be implemented:
+- Update README to remove false claims about performance fees
+- Remove unused constants and events
+- Clarify the actual economic model
+
+**Option 3: Implement simplified fee model**
+Instead of performance-based fees, implement:
+- Fixed percentage fees on deposits/withdrawals
+- Time-based fees
+- Flat management fees
+
+**Critical Note:** This is not a simple bug fix - it's a fundamental missing feature that goes to the heart of the protocol's economic model. The current implementation cannot deliver on its stated value proposition, making this a critical issue that affects the entire protocol's viability.
+
+The absence of performance fee logic suggests the protocol was either never completed or underwent significant scope changes without updating the documentation and removing unused code.
+
+---
+
 ### [H-1] The constructor of `VaultShares` tries to get LP tokens from non-existent WETH/WETH Uniswap pools when the asset of the vault is WETH, which breaks the `divestThenInvest` modifier.
 
 **Description:** 
