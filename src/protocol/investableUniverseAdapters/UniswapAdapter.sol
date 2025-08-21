@@ -38,10 +38,11 @@ contract UniswapAdapter is AStaticUSDCData {
     function _uniswapInvest(IERC20 token, uint256 amount) internal {
         IERC20 counterPartyToken = token == i_weth ? i_tokenOne : i_weth;
         // We will do half in WETH and half in the token
-        uint256 amountOfTokenToSwap = amount / 2;
-        // @audit-high: USDC has only 6 decimals, while WETH has 18 decimals
-        // WBTC has 8 decimals... basically any unusual ERC20 that doesn't have 18 decimals will be problematic
-        
+        uint256 amountOfTokenToSwap = amount / 2; 
+        //@audit-low: this is not a good approach, as it doesn't account for price impact, 
+        // slippage and fees. Therefore, some of the asset will remain in the contract, due to 
+        // the output of the swap being less than half of the total original amount.
+
         // the path array is supplied to the Uniswap router, which allows us to create swap paths
         // in case a pool does not exist for the input token and the output token
         // however, in this case, we are sure that a swap path exists for all pair permutations of WETH, USDC and LINK

@@ -17,7 +17,7 @@ interface IVaultShares is IERC4626, IVaultData {
         uint256 guardianAndDaoCut;
         address vaultGuardians; // q why plural? probably just because it's the name of the contract: VaultGuardians
         address weth;
-        address usdc; // q why just weth and usdc? why usdc? @audit-medium: this should be `token` instead of `usdc`
+        address usdc; // q why just weth and usdc? why usdc? this seems to be the inteded behaviour...
     }
 
     function updateHoldingAllocation(AllocationData memory tokenAllocationData) external;

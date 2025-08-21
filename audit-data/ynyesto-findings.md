@@ -421,3 +421,99 @@ Update the comment to be more accurate:
 ```solidity
 // amounts[1] is the amount of counterPartyToken received from the swap
 ```
+
+---
+
+### [I-3] Empty and unused interfaces create confusion and suggest incomplete protocol design
+
+**Description:** 
+
+The protocol contains several empty interfaces that are not used anywhere in the codebase:
+
+1. **`IVaultGuardians`** (src/interfaces/IVaultGuardians.sol): Completely empty interface with no function signatures
+2. **`IInvestableUniverseAdapter`** (src/interfaces/InvestableUniverseAdapter.sol): Interface with both function signatures commented out
+
+These interfaces suggest that the protocol was designed with a specific architecture in mind but was never fully implemented, creating confusion for developers and auditors.
+
+**Impact:** 
+
+- **Developer confusion**: Empty interfaces suggest incomplete or abandoned design patterns
+- **Code maintainability**: Unused interfaces make the codebase harder to understand
+- **Audit complexity**: Auditors must determine whether these are intentional or oversight
+- **Protocol clarity**: Suggests the protocol design may have evolved from the original architecture
+
+**Code Location:**
+
+```solidity
+// src/interfaces/IVaultGuardians.sol
+interface IVaultGuardians {} // q why empty?
+
+// src/interfaces/InvestableUniverseAdapter.sol  
+interface IInvestableUniverseAdapter { // q why are both functions commented out?
+// function invest(IERC20 token, uint256 amount) external;
+// function divest(IERC20 token, uint256 amount) external;
+}
+```
+
+**Recommended Mitigation:** 
+
+Either:
+1. **Remove unused interfaces** if they're not needed
+2. **Implement the interfaces** if they represent intended functionality
+3. **Add clear documentation** explaining why they exist but are empty
+
+If these interfaces are meant for future use, add TODO comments explaining their intended purpose and timeline for implementation.
+
+---
+
+### [I-4] Confusing variable naming in `AStaticUSDCData.sol` makes the code harder to understand
+
+**Description:** 
+
+The `AStaticUSDCData.sol` contract uses the generic variable name `i_tokenOne` when it's specifically designed to work with USDC:
+
+```solidity
+// Intended to be USDC
+IERC20 internal immutable i_tokenOne;
+```
+
+However, throughout the codebase, this variable is consistently used as if it were USDC, and the constructor parameter is even named `usdc` in some places. The generic name `i_tokenOne` is misleading and doesn't reflect the actual intended behavior.
+
+**Impact:** 
+
+- **Code readability**: Developers may not immediately understand that `i_tokenOne` is USDC
+- **Maintenance confusion**: Future developers might think this variable can be any token
+- **Audit complexity**: Auditors must trace through the code to understand the actual usage
+- **Inconsistent naming**: The variable name doesn't match its intended purpose
+
+**Code Location:**
+
+```solidity
+// src/abstract/AStaticUSDCData.sol
+// Intended to be USDC
+IERC20 internal immutable i_tokenOne;
+
+// Used throughout the codebase as if it were USDC
+constructor(address weth, address tokenOne) AStaticWethData(weth) {
+    i_tokenOne = IERC20(tokenOne); 
+}
+```
+
+**Recommended Mitigation:** 
+
+Rename the variable to clearly indicate its purpose:
+
+```solidity
+// Change from generic to specific
+IERC20 internal immutable i_usdc;
+
+constructor(address weth, address usdc) AStaticWethData(weth) {
+    i_usdc = IERC20(usdc);
+}
+
+function getUsdc() external view returns (IERC20) {
+    return i_usdc;
+}
+```
+
+This makes the code more self-documenting and eliminates confusion about the variable's intended purpose.
