@@ -648,7 +648,7 @@ This approach maintains the contract's generic nature while allowing each deploy
 
 ---
 
-### [I-7] Inconsistent inheritance hierarchy for static token data
+### [I-7] Confusing inheritance hierarchy for static token data
 
 **Description:**
 
