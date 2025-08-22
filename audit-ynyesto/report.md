@@ -11,7 +11,7 @@ header-includes:
     \centering
     \begin{figure}[h]
         \centering
-        \includegraphics[width=0.5\textwidth]{logo.pdf} 
+        \includegraphics[width=0.5\textwidth]{logo.svg} 
     \end{figure}
     \vspace*{2cm}
     {\Huge\bfseries Vault Guardians Protocol Audit Report\par}
