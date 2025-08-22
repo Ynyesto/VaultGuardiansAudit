@@ -1,5 +1,76 @@
 
-### [C-1] Complete absence of performance fee logic despite protocol claims
+### [C-1] Protocol falsely claims upgradeability without implementing any upgrade mechanism
+
+**Description:** 
+
+The README explicitly states that the protocol is upgradeable:
+
+> "The protocol is upgradeable so that if any of the platforms in the investable universe change, or we want to add more, we can do so."
+
+However, **zero upgradeability mechanisms exist in the codebase**:
+
+- No proxy contracts are inherited by any protocol contracts
+- No UUPS, Transparent, or Beacon proxy patterns are implemented
+- No upgrade functions or upgrade logic exists
+- All contracts are standard, non-upgradeable contracts
+- No deployment scripts or configuration indicate upgradeability
+
+**Impact:** 
+
+- **False advertising**: Users are led to believe the protocol can be upgraded when it cannot
+- **Security implications**: Users may assume the protocol can fix critical bugs or add new features
+- **Protocol limitations**: The protocol cannot adapt to changes in underlying platforms (Aave, Uniswap)
+- **User expectations**: Depositors expect a protocol that can evolve and improve over time
+- **Documentation deception**: The README makes claims that don't match the actual implementation
+
+**Code Location:**
+
+```markdown
+# README.md
+The protocol is upgradeable so that if any of the platforms in the investable universe change, or we want to add more, we can do so.
+```
+
+```solidity
+// src/protocol/VaultGuardians.sol
+contract VaultGuardians is Ownable, VaultGuardiansBase {
+    // ❌ No proxy inheritance, no upgrade functions
+}
+
+// src/protocol/VaultShares.sol  
+contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, ReentrancyGuard {
+    // ❌ No proxy inheritance, no upgrade functions
+}
+
+// src/dao/VaultGuardianToken.sol
+contract VaultGuardianToken is ERC20, ERC20Permit, ERC20Votes, Ownable {
+    // ❌ No proxy inheritance, no upgrade functions
+}
+```
+
+**Root Cause:**
+
+The protocol documentation claims upgradeability without implementing any of the standard upgradeability patterns used in the Ethereum ecosystem.
+
+**Recommended Mitigation:** 
+
+**Option 1: Implement proper upgradeability (Recommended)**
+This requires significant architectural changes:
+- Implement UUPS or Transparent proxy pattern
+- Make core contracts upgradeable through proxy delegation
+- Add proper upgrade access controls
+- Implement upgrade safety checks and timelocks
+
+**Option 2: Remove false claims**
+If upgradeability cannot be implemented:
+- Update README to remove false claims about upgradeability
+- Clarify that the protocol is immutable once deployed
+- Document the limitations of the current architecture
+
+**Critical Note:** This is not a simple feature gap - it's a fundamental disconnect between the protocol's stated capabilities and its actual implementation. Users expect an upgradeable protocol based on the documentation, but the current implementation is completely immutable.
+
+---
+
+### [C-2] Complete absence of performance fee logic despite protocol claims
 
 **Description:** 
 
@@ -67,7 +138,7 @@ The absence of performance fee logic suggests the protocol was either never comp
 
 ---
 
-### [C-2] DAO lacks core functionality promised in documentation
+### [C-3] DAO lacks core functionality promised in documentation
 
 **Description:** 
 
@@ -188,6 +259,91 @@ Change the following line in the constructor of `VaultShares`:
 +       {
 +            i_uniswapLiquidityToken = IERC20(i_uniswapFactory.getPair(address(constructorData.asset), address(i_weth))); 
 +       }
+```
+
+---
+
+### [H-2] Incorrect share accounting due to missing `totalAssets()` override
+
+**Description:**
+
+The `VaultShares.sol` contract inherits from OpenZeppelin's ERC-4626 but does not override `totalAssets()`. The default implementation only considers idle assets held by the vault, ignoring the funds invested into Aave and Uniswap. This creates a fundamental mismatch between the vault's true holdings and its reported TVL.
+
+**Impact:**
+
+- **Broken share pricing**: `previewDeposit()` and `previewMint()` rely on `_convertToShares()` which uses the incorrect `totalAssets()`. New deposits mint shares in the wrong proportions, breaking fairness between new and existing users.  
+- **Broken previews**: `previewWithdraw()` and `previewRedeem()` return incorrect results unless the vault forcibly divests beforehand.  
+- **ERC-4626 non-compliance**: The vault fails to adhere to the standard’s requirements for accurate TVL and preview math.  
+- **Systemic accounting flaw**: Even if patched by workarounds, the accounting model is fundamentally inconsistent with ERC-4626.
+
+**Code Location:**
+
+```solidity
+// src/protocol/VaultShares.sol
+contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, ReentrancyGuard {
+    // ❌ Missing totalAssets() override
+    
+    // Inherited implementation only counts idle assets:
+    // function totalAssets() public view virtual returns (uint256) {
+    //     return IERC20(asset()).balanceOf(address(this));
+    // }
+}
+```
+
+**Root Cause:**
+
+The vault extends ERC-4626 but fails to account for external investments in `totalAssets()`, leaving the accounting incomplete.
+
+**Recommended Mitigation:**
+
+Implement `totalAssets()` to aggregate balances from Aave, Uniswap LP tokens, and idle funds:
+
+```solidity
+function totalAssets() public view override returns (uint256) {
+    uint256 idle = IERC20(asset()).balanceOf(address(this));
+    uint256 aave = i_aaveAToken.balanceOf(address(this)); // 1:1 with underlying
+    uint256 lpValueInAsset = calculateLpValueInAsset();
+    return idle + aave + lpValueInAsset;
+}
+```
+
+---
+
+### [H-3] Public `rebalanceFunds()` enables griefing and MEV exploitation when allocations change
+
+**Description:**
+
+The `rebalanceFunds()` function in `VaultShares.sol` is publicly callable and applies the `divestThenInvest` modifier. This forces the vault to fully unwind its Uniswap LP and Aave positions and then reinvest according to the current allocation data.  
+
+At first glance, one might assume this is always exploitable via sandwich attacks since intermediate swaps occur during the rebalance process. However, if the allocation ratios have **not changed**, the vault’s round-trip divest/reinvest cycle results in approximately the same state as before (e.g., withdrawing WETH+USDC liquidity, temporarily swapping to balance the pair, then swapping back when re-adding liquidity). In such a case, backrunning the transaction does not yield consistent extractable profit for attackers, since the pool ends up effectively unchanged.  
+
+The real vulnerability arises after a vault guardian calls `updateHoldingAllocation`. In that scenario, the next call to `rebalanceFunds()` performs *meaningful allocation changes* — for example, reducing Aave allocation and increasing Uniswap allocation. This requires one-sided trades of predictable direction and large size. These trades are visible in the mempool and can be sandwiched, allowing MEV searchers to extract value from the vault.  
+
+**Impact:**
+
+- **MEV exploitation after allocation changes:** When `updateHoldingAllocation` modifies the strategy, the subsequent `rebalanceFunds` performs large predictable swaps that can be sandwiched for profit at the vault’s expense.
+- **Griefing risk:** Public callers can repeatedly force full divest/reinvest cycles, exposing the vault to unnecessary slippage and (swap, and liquidity addition and withdrawal) fees even if allocations remain unchanged.
+- **Economic inefficiency:** The “divest everything, reinvest everything” approach magnifies costs versus a delta-based rebalance.
+
+**Code Location:**
+
+```solidity
+// src/protocol/VaultShares.sol
+function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
+// ❌ Public access allows anyone to trigger costly operations and expose allocation changes to MEV
+```
+
+**Recommended Mitigation:**
+
+1. **Access control:** Restrict `rebalanceFunds()` to trusted roles (e.g., guardian or DAO) rather than leaving it public.
+2. **Delta-based rebalancing:** Instead of divesting all funds, compute and execute only the minimal trades required to reach the new allocation.
+3. **Slippage checks:** Add strict `minOut` protections to prevent execution at manipulated prices when allocation changes do require swaps.
+
+```solidity
+// Example guardian-only restriction
+function rebalanceFunds() public onlyGuardian isActive nonReentrant {
+    _rebalancePortfolio();
+}
 ```
 
 ---
@@ -335,6 +491,168 @@ amountBMin: amountBMin,
 ```
 
 This would protect users from excessive slippage while maintaining reasonable execution rates.
+
+---
+
+### [M-3] `sweepErc20s` function in `VaultGuardians` is fundamentally flawed and cannot fulfill its intended purpose
+
+**Description:** 
+
+The `VaultGuardians` contract includes a `sweepErc20s()` function that claims to collect "little bits left around from swapping or rounding errors":
+
+```solidity
+/*
+ * @notice Any excess ERC20s can be scooped up by the DAO. 
+ * @notice This is often just little bits left around from swapping or rounding errors
+ * @dev Since this is owned by the DAO, the funds will always go to the DAO. 
+ * @param asset The ERC20 to sweep
+ */
+function sweepErc20s(IERC20 asset) external {
+    uint256 amount = asset.balanceOf(address(this));
+    emit VaultGuardians__SweptTokens(address(asset));
+    asset.safeTransfer(owner(), amount);
+}
+```
+
+However, this function has a critical architectural flaw: **it can only sweep tokens from the `VaultGuardians` contract itself, but user funds and leftover tokens from Uniswap operations are stored in individual `VaultShares` contracts**.
+
+**Impact:** 
+
+- **Function is ineffective**: The sweep function cannot collect the "dust" it's designed to collect
+- **Misleading documentation**: The comment suggests it will collect leftover tokens from swaps, but it cannot
+- **Wasted gas**: DAO calls to this function will always return 0 (no tokens to sweep)
+- **Architectural confusion**: Suggests the developers didn't understand their own protocol design
+
+**Root Cause:**
+
+The protocol architecture separates concerns incorrectly:
+
+1. **`VaultGuardians`** - Protocol entry point and DAO control (doesn't hold user funds)
+2. **`VaultShares`** - Individual vaults that hold user deposits and leftover tokens
+3. **`UniswapAdapter`** - Operates within `VaultShares` contracts, leaving dust there
+
+The `holdAllocation` portion of user deposits (which could be 100% of deposits) never leaves the `VaultShares` contract:
+
+```solidity
+// src/protocol/VaultShares.sol _investFunds function
+function _investFunds(uint256 assets) private {
+    uint256 uniswapAllocation = (assets * s_allocationData.uniswapAllocation) / ALLOCATION_PRECISION;
+    uint256 aaveAllocation = (assets * s_allocationData.aaveAllocation) / ALLOCATION_PRECISION;
+
+    _uniswapInvest(IERC20(asset()), uniswapAllocation);
+    _aaveInvest(IERC20(asset()), aaveAllocation);
+    // holdAllocation is NEVER invested anywhere - it stays in VaultShares!
+}
+```
+
+**Code Location:**
+
+```solidity
+// src/protocol/VaultGuardians.sol
+function sweepErc20s(IERC20 asset) external {
+    uint256 amount = asset.balanceOf(address(this)); // Only checks VaultGuardians balance
+    asset.safeTransfer(owner(), amount);
+}
+
+// src/protocol/VaultShares.sol
+function _investFunds(uint256 assets) private {
+    // holdAllocation portion stays in VaultShares as underlying asset
+    // Uniswap dust also stays in VaultShares
+}
+```
+
+**Recommended Mitigation:** 
+
+**Option 1: Remove the misleading function entirely (Recommended)**
+Since the function cannot fulfill its intended purpose and any implementation would either be ineffective or dangerous, remove it completely to avoid confusion.
+
+**Option 2: Implement safe sweeping with user allocation tracking**
+If sweep functionality is truly needed, the contract must keep track of users' hold allocations to ensure only dust (tokens that exceed user deposits) can be swept:
+
+```solidity
+function sweepExcessTokens(IERC20 asset) external onlyOwner {
+    uint256 totalUserHoldAllocations = getTotalUserHoldAllocations(asset);
+    uint256 currentBalance = asset.balanceOf(address(this));
+    
+    require(currentBalance > totalUserHoldAllocations, "No excess tokens");
+    uint256 excessAmount = currentBalance - totalUserHoldAllocations;
+    
+    asset.safeTransfer(owner(), excessAmount);
+}
+```
+
+This approach requires tracking the total `holdAllocation` amounts in vaults to ensure user funds are never swept.
+
+**Note:** The existing test `testSweepErc20s()` in `VaultGuardiansTest.t.sol` is misleading because it artificially transfers tokens to the `VaultGuardians` contract, which doesn't happen in normal protocol usage. In reality, user funds are deposited into `VaultShares` contracts by calling the `deposit()` function, making the sweep function ineffective.
+
+The current implementation suggests the developers didn't fully understand their own protocol architecture, making this a significant design flaw that renders the sweep functionality completely ineffective.
+
+---
+
+### [M-4] Inefficient and unsafe reliance on `divestThenInvest`
+
+**Description:**
+
+Because `totalAssets()` is not correctly implemented, the vault introduces a `divestThenInvest` modifier that divests all funds from Uniswap and Aave before withdrawals/redemptions and reinvests them afterward. This approach is a workaround rather than a proper solution.
+
+**Impact:**
+
+- **Severe gas inefficiency**: Every redeem/withdraw involves two full portfolio operations (divest + reinvest).  
+- **Economic leakage**: Fees, slippage, and price impact are incurred by the vault on every withdraw/redeem operation by any user.
+- **MEV / griefing risk**: Full divestment exposes the vault to sandwiching on Uniswap operations, as explained in the M-2 finding.  
+- **Poor UX**: Even small user withdrawals trigger expensive operations affecting all participants.
+
+**Code Location:**
+
+```solidity
+modifier divestThenInvest() {
+    if (uniswapLiquidityTokensBalance > 0) {
+        _uniswapDivest(IERC20(asset()), uniswapLiquidityTokensBalance);
+    }
+    if (aaveAtokensBalance > 0) {
+        _aaveDivest(IERC20(asset()), aaveAtokensBalance);
+    }
+    _;
+    if (s_isActive) {
+        _investFunds(IERC20(asset()).balanceOf(address(this)));
+    }
+}
+```
+
+**Root Cause:**
+
+Instead of fixing the accounting issue, the protocol forces full divestment to make `totalAssets()` momentarily accurate, resulting in inefficiency and risk.
+
+**Recommended Mitigation:**
+
+After implementing a correct `totalAssets()`, replace `divestThenInvest` with targeted withdrawals that divest only what is necessary:
+
+```solidity
+function _ensureAssetsAvailable(uint256 assetsNeeded) internal {
+    uint256 idle = IERC20(asset()).balanceOf(address(this));
+    if (idle >= assetsNeeded) return;
+
+    uint256 shortfall = assetsNeeded - idle;
+    uint256 totalInvested = totalAssets() - idle;
+
+    uint256 aaveShare = (i_aaveAToken.balanceOf(address(this)) * shortfall) / totalInvested;
+    uint256 lpShare = shortfall - aaveShare;
+
+    if (aaveShare > 0) {
+        _aaveDivest(IERC20(asset()), aaveShare);
+    }
+    if (lpShare > 0) {
+        uint256 lpTokensToRemove = calculateLpTokensForAssetAmount(lpShare);
+        _uniswapDivestLpAmount(IERC20(asset()), lpTokensToRemove);
+    }
+}
+```
+
+**Notes:**
+
+1. Requires a reliable oracle for LP valuation to avoid manipulation.  
+2. Removes need for full divest/reinvest cycle, saving gas and improving UX.  
+3. This change depends on implementing a correct `totalAssets()` first.
 
 ---
 
@@ -508,101 +826,6 @@ function _optimalSwapIn(uint a, uint rIn) internal pure returns (uint) {
 5. **MEV protection**: Non-zero minimum amounts prevent sandwich attacks
 
 This approach ensures that the protocol creates the most balanced liquidity pools possible while protecting users from excessive slippage and MEV attacks.
-
----
-
-### [M-3] `sweepErc20s` function in `VaultGuardians` is fundamentally flawed and cannot fulfill its intended purpose
-
-**Description:** 
-
-The `VaultGuardians` contract includes a `sweepErc20s()` function that claims to collect "little bits left around from swapping or rounding errors":
-
-```solidity
-/*
- * @notice Any excess ERC20s can be scooped up by the DAO. 
- * @notice This is often just little bits left around from swapping or rounding errors
- * @dev Since this is owned by the DAO, the funds will always go to the DAO. 
- * @param asset The ERC20 to sweep
- */
-function sweepErc20s(IERC20 asset) external {
-    uint256 amount = asset.balanceOf(address(this));
-    emit VaultGuardians__SweptTokens(address(asset));
-    asset.safeTransfer(owner(), amount);
-}
-```
-
-However, this function has a critical architectural flaw: **it can only sweep tokens from the `VaultGuardians` contract itself, but user funds and leftover tokens from Uniswap operations are stored in individual `VaultShares` contracts**.
-
-**Impact:** 
-
-- **Function is ineffective**: The sweep function cannot collect the "dust" it's designed to collect
-- **Misleading documentation**: The comment suggests it will collect leftover tokens from swaps, but it cannot
-- **Wasted gas**: DAO calls to this function will always return 0 (no tokens to sweep)
-- **Architectural confusion**: Suggests the developers didn't understand their own protocol design
-
-**Root Cause:**
-
-The protocol architecture separates concerns incorrectly:
-
-1. **`VaultGuardians`** - Protocol entry point and DAO control (doesn't hold user funds)
-2. **`VaultShares`** - Individual vaults that hold user deposits and leftover tokens
-3. **`UniswapAdapter`** - Operates within `VaultShares` contracts, leaving dust there
-
-The `holdAllocation` portion of user deposits (which could be 100% of deposits) never leaves the `VaultShares` contract:
-
-```solidity
-// src/protocol/VaultShares.sol _investFunds function
-function _investFunds(uint256 assets) private {
-    uint256 uniswapAllocation = (assets * s_allocationData.uniswapAllocation) / ALLOCATION_PRECISION;
-    uint256 aaveAllocation = (assets * s_allocationData.aaveAllocation) / ALLOCATION_PRECISION;
-
-    _uniswapInvest(IERC20(asset()), uniswapAllocation);
-    _aaveInvest(IERC20(asset()), aaveAllocation);
-    // holdAllocation is NEVER invested anywhere - it stays in VaultShares!
-}
-```
-
-**Code Location:**
-
-```solidity
-// src/protocol/VaultGuardians.sol
-function sweepErc20s(IERC20 asset) external {
-    uint256 amount = asset.balanceOf(address(this)); // Only checks VaultGuardians balance
-    asset.safeTransfer(owner(), amount);
-}
-
-// src/protocol/VaultShares.sol
-function _investFunds(uint256 assets) private {
-    // holdAllocation portion stays in VaultShares as underlying asset
-    // Uniswap dust also stays in VaultShares
-}
-```
-
-**Recommended Mitigation:** 
-
-**Option 1: Remove the misleading function entirely (Recommended)**
-Since the function cannot fulfill its intended purpose and any implementation would either be ineffective or dangerous, remove it completely to avoid confusion.
-
-**Option 2: Implement safe sweeping with user allocation tracking**
-If sweep functionality is truly needed, the contract must keep track of users' hold allocations to ensure only dust (tokens that exceed user deposits) can be swept:
-
-```solidity
-function sweepExcessTokens(IERC20 asset) external onlyOwner {
-    uint256 totalUserHoldAllocations = getTotalUserHoldAllocations(asset);
-    uint256 currentBalance = asset.balanceOf(address(this));
-    
-    require(currentBalance > totalUserHoldAllocations, "No excess tokens");
-    uint256 excessAmount = currentBalance - totalUserHoldAllocations;
-    
-    asset.safeTransfer(owner(), excessAmount);
-}
-```
-
-This approach requires tracking the total `holdAllocation` amounts in vaults to ensure user funds are never swept.
-
-**Note:** The existing test `testSweepErc20s()` in `VaultGuardiansTest.t.sol` is misleading because it artificially transfers tokens to the `VaultGuardians` contract, which doesn't happen in normal protocol usage. In reality, user funds are deposited into `VaultShares` contracts by calling the `deposit()` function, making the sweep function ineffective.
-
-The current implementation suggests the developers didn't fully understand their own protocol architecture, making this a significant design flaw that renders the sweep functionality completely ineffective.
 
 ---
 
@@ -1187,3 +1410,125 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
 **Recommended Mitigation:** 
 
 **Expand the interface** to include all public and external functions.
+
+---
+
+### [I-12] Missing validation for critical protocol parameters
+
+**Description:** 
+
+The `VaultShares.sol` contract lacks validation for several critical parameters that could lead to protocol failures or economic issues:
+
+1. **No validation that `i_guardianAndDaoCut > 0`** - Could cause division by zero in fee calculations
+2. **No validation that LP pair exists** - Constructor could set `i_uniswapLiquidityToken` to `address(0)`
+3. **No validation that Aave aToken exists** - Constructor could fail silently
+4. **No bounds checking on allocation percentages** - Already implemented but worth noting
+
+**Impact:** 
+
+- **Potential crashes**: Division by zero in fee calculations
+- **Silent failures**: Protocol could deploy with invalid configurations
+- **Economic issues**: Invalid parameters could lead to incorrect fee calculations
+- **User experience**: Deposits or withdrawals could fail unexpectedly
+
+**Code Location:**
+
+```solidity
+// src/protocol/VaultShares.sol
+constructor(ConstructorData memory constructorData)
+    ERC4626(constructorData.asset)
+    ERC20(constructorData.vaultName, constructorData.vaultSymbol)
+    AaveAdapter(constructorData.aavePool)
+    UniswapAdapter(constructorData.uniswapRouter, constructorData.weth, constructorData.usdc)
+{
+    i_guardian = constructorData.guardian;
+    i_guardianAndDaoCut = constructorData.guardianAndDaoCut; // ❌ No validation > 0
+    i_vaultGuardians = constructorData.vaultGuardians;
+    s_isActive = true;
+    updateHoldingAllocation(constructorData.allocationData);
+
+    // External calls without validation
+    i_aaveAToken = IERC20(IPool(constructorData.aavePool)
+        .getReserveData(address(constructorData.asset)).aTokenAddress);
+    // ❌ No validation that aToken != address(0)
+    
+    i_uniswapLiquidityToken = IERC20(i_uniswapFactory
+        .getPair(address(constructorData.asset), address(i_weth))); 
+    // ❌ No validation that pair != address(0)
+}
+```
+
+**Recommended Mitigation:** 
+
+Add comprehensive parameter validation:
+
+```solidity
+constructor(ConstructorData memory constructorData)
+    ERC4626(constructorData.asset)
+    ERC20(constructorData.vaultName, constructorData.vaultSymbol)
+    AaveAdapter(constructorData.aavePool)
+    UniswapAdapter(constructorData.uniswapRouter, constructorData.weth, constructorData.usdc)
+{
+    require(constructorData.guardian != address(0), "Invalid guardian");
+    require(constructorData.vaultGuardians != address(0), "Invalid vault guardians");
+    require(constructorData.guardianAndDaoCut > 0, "Invalid fee cut");
+    
+    i_guardian = constructorData.guardian;
+    i_guardianAndDaoCut = constructorData.guardianAndDaoCut;
+    i_vaultGuardians = constructorData.vaultGuardians;
+    s_isActive = true;
+    updateHoldingAllocation(constructorData.allocationData);
+
+    // Validate Aave integration
+    i_aaveAToken = IERC20(IPool(constructorData.aavePool)
+        .getReserveData(address(constructorData.asset)).aTokenAddress);
+    require(address(i_aaveAToken) != address(0), "Invalid aToken");
+    
+    // Validate Uniswap integration
+    i_uniswapLiquidityToken = IERC20(i_uniswapFactory
+        .getPair(address(constructorData.asset), address(i_weth)));
+    require(address(i_uniswapLiquidityToken) != address(0), "Invalid LP pair");
+}
+```
+
+**Additional Considerations:**
+
+1. **Add validation that asset is not zero address**
+2. **Validate that allocation percentages sum to exactly 1000**
+3. **Add validation that guardian and vault guardians contracts are properly initialized**
+4. **Consider adding maximum bounds for fee percentages to prevent excessive fees**
+
+---
+
+### [I-13] Function naming inconsistency in `getUniswapLiquidtyToken()`
+
+**Description:** 
+
+The `getUniswapLiquidtyToken()` function in `VaultShares.sol` has a typo in its name - it should be `getUniswapLiquidityToken()` (missing 'i' in "Liquidity").
+
+**Impact:** 
+
+- **Code inconsistency**: Function name doesn't match the variable it returns
+- **Developer confusion**: Inconsistent naming makes the code harder to understand
+- **Maintenance issues**: Future developers might use the wrong function name
+
+**Code Location:**
+
+```solidity
+// src/protocol/VaultShares.sol
+function getUniswapLiquidtyToken() external view returns (address) { // ❌ Typo: "Liquidty"
+    return address(i_uniswapLiquidityToken); // Returns "Liquidity" token
+}
+```
+
+**Recommended Mitigation:** 
+
+Fix the function name:
+
+```solidity
+function getUniswapLiquidityToken() external view returns (address) { // ✅ Fixed: "Liquidity"
+    return address(i_uniswapLiquidityToken);
+}
+```
+
+**Note:** This change will break existing integrations that call the function by name, so it should be coordinated with any external systems using this function.
