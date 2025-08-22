@@ -1,3 +1,4 @@
+## Critical Severity Findings
 
 ### [C-1] Protocol falsely claims upgradeability without implementing any upgrade mechanism
 
@@ -274,6 +275,7 @@ amountBMin: amountBMin,
 This would protect users from excessive slippage while maintaining reasonable execution rates.
 
 ---
+## High Severity Findings
 
 ### [H-1] The constructor of `VaultShares` tries to get LP tokens from non-existent WETH/WETH Uniswap pools when the asset of the vault is WETH, which breaks the `divestThenInvest` modifier.
 
@@ -402,6 +404,7 @@ function rebalanceFunds() public onlyGuardian isActive nonReentrant {
 ```
 
 ---
+## Medium Severity Findings
 
 ### [M-1] The `deposit` function in `VaultShares` mints more shares than assets deposited, creating an inflationary mechanism that dilutes existing shareholders
 
@@ -655,6 +658,7 @@ function _ensureAssetsAvailable(uint256 assetsNeeded) internal {
 3. This change depends on implementing a correct `totalAssets()` first.
 
 ---
+## Low Severity Findings
 
 ### [L-1] Unnecessary double approval in `UniswapAdapter._uniswapInvest()` function
 
@@ -685,9 +689,6 @@ Simplify the approval to only approve what's needed:
 // amounts[0] equals amountOfTokenToSwap, so just approve amountOfTokenToSwap
 succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap);
 ```
-
----
-
 ---
 
 ### [L-2] Naive liquidity calculation in `UniswapAdapter` makes balanced liquidity addition leave small amounts of the asset in the `UniswapAdapter` contract due to not accounting for price impact, slippage and fees.
@@ -828,6 +829,7 @@ function _optimalSwapIn(uint a, uint rIn) internal pure returns (uint) {
 This approach ensures that the protocol creates the most balanced liquidity pools possible while protecting users from excessive slippage and MEV attacks.
 
 ---
+## Informational Findings
 
 ### [I-1] Incorrect comment in `UniswapAdapter._uniswapInvest()` function
 
@@ -1532,3 +1534,68 @@ function getUniswapLiquidityToken() external view returns (address) { // ✅ Fix
 ```
 
 **Note:** This change will break existing integrations that call the function by name, so it should be coordinated with any external systems using this function.
+
+## Gas optimizations
+
+### [G-1] Using `calldata` instead of `memory` for read-only function parameters
+
+**Description:** 
+Functions with `external` visibility that take complex types like structs or arrays as read-only arguments can use `calldata` instead of `memory` to save gas. This avoids copying the data from calldata to memory.
+
+**Impact:** 
+Saves gas on external function calls with large inputs.
+
+**Code Location:**
+```solidity
+// src/protocol/VaultGuardiansBase.sol
+function becomeGuardian(AllocationData memory wethAllocationData) external returns (address) { ... }
+function becomeTokenGuardian(AllocationData memory allocationData, IERC20 token) external onlyGuardian(i_weth) returns (address) { ... }
+function updateHoldingAllocation(IERC20 token, AllocationData memory tokenAllocationData) external onlyGuardian(token) { ... }
+
+// src/protocol/VaultShares.sol
+function updateHoldingAllocation(AllocationData memory tokenAllocationData) public onlyVaultGuardians isActive { ... }
+```
+
+**Recommended Mitigation:** 
+Change the data location for `AllocationData` parameters from `memory` to `calldata`. For `updateHoldingAllocation` in `VaultShares.sol`, its visibility must be changed to `external` to use `calldata`.
+
+---
+
+### [G-2] Inefficient storage reads in `_becomeTokenGuardian` function
+
+**Description:** 
+The `_becomeTokenGuardian` function in `VaultGuardiansBase.sol` performs multiple storage reads (`SLOAD` operations) of the same value `s_guardianStakePrice` that could be optimized by caching the value in memory.
+
+**Impact:** 
+Each `SLOAD` operation costs 100 gas. The `_becomeTokenGuardian` function reads `s_guardianStakePrice` from storage multiple times, incurring unnecessary gas costs. 
+
+**Code Location:**
+```solidity
+// src/protocol/VaultGuardiansBase.sol Lines 277-292 - Multiple reads of s_guardianStakePrice
+function _becomeTokenGuardian(IERC20 token, VaultShares tokenVault) private returns (address) {
+    s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
+    emit GuardianAdded(msg.sender, token);
+    i_vgToken.mint(msg.sender, s_guardianStakePrice);        // 1st SLOAD
+    token.safeTransferFrom(msg.sender, address(this), s_guardianStakePrice);  // 2nd SLOAD
+    bool succ = token.approve(address(tokenVault), s_guardianStakePrice);     // 3rd SLOAD
+    // ... rest of function
+}
+```
+
+**Recommended Mitigation:** 
+Cache the storage value in a memory variable to avoid multiple `SLOAD` operations:
+
+```solidity
+function _becomeTokenGuardian(IERC20 token, VaultShares tokenVault) private returns (address) {
+    uint256 stakePrice = s_guardianStakePrice;  // Cache the value once
+    
+    s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
+    emit GuardianAdded(msg.sender, token);
+    i_vgToken.mint(msg.sender, stakePrice);
+    token.safeTransferFrom(msg.sender, address(this), stakePrice);
+    bool succ = token.approve(address(tokenVault), stakePrice);
+    // ... rest of function
+}
+```
+
+This approach saves approximately 300 gas per call by avoiding redundant storage reads of the same value.
