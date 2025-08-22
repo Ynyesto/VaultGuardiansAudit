@@ -11,7 +11,7 @@ header-includes:
     \centering
     \begin{figure}[h]
         \centering
-        \includegraphics[width=0.5\textwidth]{logo.svg} 
+        \includegraphics[width=0.5\textwidth]{logo.pdf} 
     \end{figure}
     \vspace*{2cm}
     {\Huge\bfseries Vault Guardians Protocol Audit Report\par}
@@ -28,6 +28,7 @@ header-includes:
 <!-- Your report starts here! -->
 
 Prepared by: [Ynyesto](https://ynyesto.dev)
+
 Lead Auditor: Antonio Rodríguez-Ynyesto
 
 # Table of Contents
@@ -41,12 +42,12 @@ Lead Auditor: Antonio Rodríguez-Ynyesto
 - [Executive Summary](#executive-summary)
   - [Issues found](#issues-found)
 - [Findings](#findings)
-- [Critical Severity](#high)
-- [High Severity](#high)
-- [Medium Severity](#medium)
-- [Low Severity](#low)
-- [Informational](#informational)
-- [Gas](#gas)
+  - [Critical Severity](#high)
+  - [High Severity](#high)
+  - [Medium Severity](#medium)
+  - [Low Severity](#low)
+  - [Informational](#informational)
+  - [Gas](#gas)
 
 # Protocol Summary
 
@@ -117,7 +118,7 @@ This security audit of the Vault Guardians protocol was conducted by Ynyesto in 
 
 ## Key Findings
 
-The audit identified **4 Critical**, **3 High**, **3 Medium**, **2 Low**, and **13 Informational** findings. The most significant issues include:
+The audit identified **4 Critical**, **3 High**, **3 Medium**, **8 Low**, **13 Informational** and **2 Gas** findings. The most significant issues include:
 
 ### Critical Issues
 - **False upgradeability claims**: Protocol documentation claims upgradeability without implementing any upgrade mechanism
@@ -145,7 +146,6 @@ The protocol exhibits several **fundamental architectural flaws** that significa
 
 **Long-term**: Implement proper upgradeability, fix ERC4626 compliance, add comprehensive slippage protection, and align documentation with actual implementation.
 
-## Issues Found
 # Findings
 
 ## Critical Severity
@@ -184,17 +184,17 @@ The protocol is upgradeable so that if any of the platforms in the investable un
 ```solidity
 // src/protocol/VaultGuardians.sol
 contract VaultGuardians is Ownable, VaultGuardiansBase {
-    // ❌ No proxy inheritance, no upgrade functions
+    //  No proxy inheritance, no upgrade functions
 }
 
 // src/protocol/VaultShares.sol  
 contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, ReentrancyGuard {
-    // ❌ No proxy inheritance, no upgrade functions
+    //  No proxy inheritance, no upgrade functions
 }
 
 // src/dao/VaultGuardianToken.sol
 contract VaultGuardianToken is ERC20, ERC20Permit, ERC20Votes, Ownable {
-    // ❌ No proxy inheritance, no upgrade functions
+    //  No proxy inheritance, no upgrade functions
 }
 ```
 
@@ -218,8 +218,6 @@ If upgradeability cannot be implemented:
 - Document the limitations of the current architecture
 
 **Critical Note:** This is not a simple feature gap - it's a fundamental disconnect between the protocol's stated capabilities and its actual implementation. Users expect an upgradeable protocol based on the documentation, but the current implementation is completely immutable.
-
----
 
 ### [C-2] Complete absence of performance fee logic despite protocol claims
 
@@ -287,8 +285,6 @@ Instead of performance-based fees, implement:
 
 The absence of performance fee logic suggests the protocol was either never completed or underwent significant scope changes without updating the documentation and removing unused code.
 
----
-
 ### [C-3] DAO lacks core functionality promised in documentation
 
 **Description:** 
@@ -301,11 +297,11 @@ The README claims the DAO is responsible for two critical functions:
 
 However, **the second function does not exist in the protocol**:
 
-1. **"Updating pricing parameters"** - The DAO can update ✅:
+1. **"Updating pricing parameters"** - The DAO can update :
    - `s_guardianStakePrice` (stake amount to become guardian)
    - `s_guardianAndDaoCut` (percentage cut from deposits)
    
-2. **"Getting a cut of all performance of all guardians"** - This is completely missing ❌:
+2. **"Getting a cut of all performance of all guardians"** - This is completely missing :
    - No performance calculation logic exists
    - No performance fee collection mechanism
    - No way for the DAO to receive performance-based revenue
@@ -369,8 +365,6 @@ Instead of performance-based fees, implement:
 
 The current implementation suggests the DAO was either never intended to have these powers or the development team abandoned the governance features without updating the documentation.
 
----
-
 ### [C-4] All Uniswap operations lack slippage protection, making them vulnerable to sandwich attacks
 
 **Description:** 
@@ -424,7 +418,6 @@ amountBMin: amountBMin,
 
 This would protect users from excessive slippage while maintaining reasonable execution rates.
 
----
 ## High Severity
 
 ### [H-1] The constructor of `VaultShares` tries to get LP tokens from non-existent WETH/WETH Uniswap pools when the asset of the vault is WETH, which breaks the `divestThenInvest` modifier.
@@ -468,8 +461,6 @@ Change the following line in the constructor of `VaultShares`:
 +       }
 ```
 
----
-
 ### [H-2] Incorrect share accounting due to missing `totalAssets()` override
 
 **Description:**
@@ -488,7 +479,7 @@ The `VaultShares.sol` contract inherits from OpenZeppelin's ERC-4626 but does no
 ```solidity
 // src/protocol/VaultShares.sol
 contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, ReentrancyGuard {
-    // ❌ Missing totalAssets() override
+    //  Missing totalAssets() override
     
     // Inherited implementation only counts idle assets:
     // function totalAssets() public view virtual returns (uint256) {
@@ -514,8 +505,6 @@ function totalAssets() public view override returns (uint256) {
 }
 ```
 
----
-
 ### [H-3] Public `rebalanceFunds()` enables griefing and MEV exploitation when allocations change
 
 **Description:**
@@ -537,7 +526,7 @@ The real vulnerability arises after a vault guardian calls `updateHoldingAllocat
 ```solidity
 // src/protocol/VaultShares.sol
 function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
-// ❌ Public access allows anyone to trigger costly operations and expose allocation changes to MEV
+//  Public access allows anyone to trigger costly operations and expose allocation changes to MEV
 ```
 
 **Recommended Mitigation:**
@@ -553,7 +542,6 @@ function rebalanceFunds() public onlyGuardian isActive nonReentrant {
 }
 ```
 
----
 ## Medium Severity
 
 ### [M-1] The `deposit` function in `VaultShares` mints more shares than assets deposited, creating an inflationary mechanism that dilutes existing shareholders
@@ -645,7 +633,7 @@ _mint(i_vaultGuardians, daoCut);
 
 This ensures that exactly 100% of shares are minted per deposit, maintaining the economic balance of the protocol.
 
----
+
 
 ### [M-2] `sweepErc20s` function in `VaultGuardians` is fundamentally flawed and cannot fulfill its intended purpose
 
@@ -740,8 +728,6 @@ This approach requires tracking the total `holdAllocation` amounts in vaults to 
 
 The current implementation suggests the developers didn't fully understand their own protocol architecture, making this a significant design flaw that renders the sweep functionality completely ineffective.
 
----
-
 ### [M-3] Inefficient and unsafe reliance on `divestThenInvest`
 
 **Description:**
@@ -807,7 +793,6 @@ function _ensureAssetsAvailable(uint256 assetsNeeded) internal {
 2. Removes need for full divest/reinvest cycle, saving gas and improving UX.  
 3. This change depends on implementing a correct `totalAssets()` first.
 
----
 ## Low Severity
 
 ### [L-1] Unnecessary double approval in `UniswapAdapter._uniswapInvest()` function
@@ -839,7 +824,6 @@ Simplify the approval to only approve what's needed:
 // amounts[0] equals amountOfTokenToSwap, so just approve amountOfTokenToSwap
 succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap);
 ```
----
 
 ### [L-2] Naive liquidity calculation in `UniswapAdapter` makes balanced liquidity addition leave small amounts of the asset in the `UniswapAdapter` contract due to not accounting for price impact, slippage and fees.
 
@@ -962,7 +946,7 @@ function _uniswapInvest(IERC20 tokenIn, uint256 amountIn) internal {
 
 // See Babylonian::sqrt() at https://github.com/Uniswap/solidity-lib/blob/master/contracts/libraries/Babylonian.sol
 function _optimalSwapIn(uint a, uint rIn) internal pure returns (uint) {
-    // constants for 0.3% fee (γ = 0.997)
+    // constants for 0.3% fee (gamma = 0.997)
     uint numerator = Babylonian.sqrt(rIn * (a * 3988000 + rIn * 3988009)) - (rIn * 1997);
     return numerator / 1994;
 }
@@ -977,8 +961,6 @@ function _optimalSwapIn(uint a, uint rIn) internal pure returns (uint) {
 5. **MEV protection**: Non-zero minimum amounts prevent sandwich attacks
 
 This approach ensures that the protocol creates the most balanced liquidity pools possible while protecting users from excessive slippage and MEV attacks.
-
----
 
 ### [L-3] Unsafe ERC20 approve operations
 
@@ -1009,8 +991,6 @@ succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap + amounts[0])
 **Recommended Mitigation:** 
 Use OpenZeppelin's `SafeERC20` library and `safeApprove` for all `approve` calls.
 
----
-
 ### [L-4] Public functions that could be external
 
 **Description:** 
@@ -1031,7 +1011,7 @@ function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
 **Recommended Mitigation:** 
 Change the visibility of `setNotActive()` and `rebalanceFunds()` from `public` to `external`.
 
----
+
 
 ### [L-5] `nonReentrant` modifier should be placed first
 
@@ -1059,8 +1039,6 @@ function redeem(...) public override(ERC4626, IERC4626) isActive divestThenInves
 **Recommended Mitigation:** 
 Reorder the modifiers in `deposit`, `rebalanceFunds`, `withdraw`, and `redeem` to place `nonReentrant` as the first modifier.
 
----
-
 ### [L-6] Use of `block.timestamp` as a deadline for Uniswap swaps is insecure
 
 **Description:** 
@@ -1081,8 +1059,6 @@ i_uniswapRouter.swapExactTokensForTokens({
 
 **Recommended Mitigation:** 
 Allow the caller to provide a deadline as a parameter for functions that perform swaps. This gives the caller control over how long a transaction can remain pending.
-
----
 
 ### [L-7] Wrong event emitted in `updateGuardianAndDaoCut` function
 
@@ -1133,8 +1109,6 @@ function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
 }
 ```
 
----
-
 ### [L-8] Unchecked return values from external calls
 
 **Description:** 
@@ -1158,7 +1132,6 @@ i_aavePool.withdraw({ ... });
 **Recommended Mitigation:** 
 Check the return values of these functions. For `withdraw`, ensure the amount returned is as expected. For `_uniswapDivest` and `_aaveDivest`, their return values should be checked in the `divestThenInvest` modifier to ensure the divestment was successful before proceeding.
 
----
 ## Informational Findings
 
 ### [I-1] Incorrect comment in `UniswapAdapter._uniswapInvest()` function
@@ -1193,8 +1166,6 @@ Fix the comment to accurately reflect the logic:
 * @notice So we swap out half of the vault's underlying asset token for WETH if the asset token is USDC or LINK
 ```
 
----
-
 ### [I-2] Misleading comment about `amounts[1]` in `UniswapAdapter._uniswapInvest()` function
 
 **Description:** 
@@ -1226,8 +1197,6 @@ Update the comment to be more accurate:
 ```solidity
 // amounts[1] is the amount of counterPartyToken received from the swap
 ```
-
----
 
 ### [I-3] Empty and unused interfaces create confusion and suggest incomplete protocol design
 
@@ -1268,8 +1237,6 @@ Either:
 3. **Add clear documentation** explaining why they exist but are empty
 
 If these interfaces are meant for future use, add TODO comments explaining their intended purpose and timeline for implementation.
-
----
 
 ### [I-4] Confusing variable naming in `AStaticUSDCData.sol` makes the code harder to understand
 
@@ -1328,8 +1295,6 @@ function getUsdc() external view returns (IERC20) {
 
 This makes the code more self-documenting and eliminates confusion about the variable's intended purpose.
 
----
-
 ### [I-5] Misleading comment in `AStaticWethData.sol` references non-existent tokens
 
 **Description:** 
@@ -1382,8 +1347,6 @@ Alternatively, if the comment refers to the entire inheritance chain (WETH + USD
 ```
 
 This eliminates confusion and makes the code more maintainable.
-
----
 
 ### [I-6] Hardcoded LINK values in `AStaticTokenData.sol` contradict the contract's generic design
 
@@ -1451,8 +1414,6 @@ abstract contract AStaticTokenData is AStaticUSDCData {
 
 This approach maintains the contract's generic nature while allowing each deployment to specify appropriate vault metadata for whatever token is being used.
 
----
-
 ### [I-7] Confusing inheritance hierarchy for static token data
 
 **Description:**
@@ -1461,10 +1422,10 @@ The protocol defines static token references through a chain of abstract contrac
 
 ```solidity
 // Chain 1: VaultGuardiansBase
-AStaticWethData → AStaticUSDCData → AStaticTokenData → VaultGuardiansBase
+AStaticWethData -> AStaticUSDCData -> AStaticTokenData -> VaultGuardiansBase
 
 // Chain 2: UniswapAdapter
-AStaticWethData → AStaticUSDCData → UniswapAdapter
+AStaticWethData -> AStaticUSDCData -> UniswapAdapter
 ```
 
 This creates two different inheritance paths for similar functionality.
@@ -1501,8 +1462,6 @@ Unify the inheritance approach so contracts follow a consistent token model. Opt
 1. **Consistent inheritance**: Have all contracts inherit from `AStaticTokenData`, ignoring unused tokens where not needed.
 2. **Restructure layers**: Split tokens into clear hierarchies (e.g., CoreTokens for WETH+USDC, ExtendedTokens for LINK and beyond).
 3. **Composition over inheritance**: Pass required tokens via constructor parameters instead of through an inheritance chain.
-
----
 
 ### [I-8] Unnecessary contract separation creates architectural complexity
 
@@ -1548,8 +1507,6 @@ Consolidate the contracts by:
 
 This simplifies the architecture while maintaining all functionality.
 
----
-
 ### [I-9] Unused import in `InvestableUniverseAdapter.sol`
 
 **Description:** 
@@ -1566,8 +1523,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 **Recommended Mitigation:** 
 Remove the unused import statement.
-
----
 
 ### [I-10] Multiple unused error definitions create code clutter
 
@@ -1609,8 +1564,6 @@ Either:
 3. **Add TODO comments** explaining why these errors exist but are unused
 
 If these errors are meant for future use, document their intended purpose and timeline for implementation. Otherwise, remove them to clean up the codebase.
-
----
 
 ### [I-11] Function ordering violates Solidity style guide recommendations
 
@@ -1667,8 +1620,6 @@ Restructure functions in this order and add clear section headers:
 
 The current ordering makes the contract harder to understand and maintain, especially for developers familiar with Solidity conventions.
 
----
-
 ### [I-12] Interface implementation inconsistency between VaultShares and IVaultShares
 
 **Description:** 
@@ -1711,8 +1662,6 @@ contract VaultShares is ERC4626, IVaultShares, AaveAdapter, UniswapAdapter, Reen
 
 **Expand the interface** to include all public and external functions.
 
----
-
 ### [I-12] Missing validation for critical protocol parameters
 
 **Description:** 
@@ -1742,7 +1691,7 @@ constructor(ConstructorData memory constructorData)
     UniswapAdapter(constructorData.uniswapRouter, constructorData.weth, constructorData.usdc)
 {
     i_guardian = constructorData.guardian;
-    i_guardianAndDaoCut = constructorData.guardianAndDaoCut; // ❌ No validation > 0
+    i_guardianAndDaoCut = constructorData.guardianAndDaoCut; //  No validation > 0
     i_vaultGuardians = constructorData.vaultGuardians;
     s_isActive = true;
     updateHoldingAllocation(constructorData.allocationData);
@@ -1750,11 +1699,11 @@ constructor(ConstructorData memory constructorData)
     // External calls without validation
     i_aaveAToken = IERC20(IPool(constructorData.aavePool)
         .getReserveData(address(constructorData.asset)).aTokenAddress);
-    // ❌ No validation that aToken != address(0)
+    //  No validation that aToken != address(0)
     
     i_uniswapLiquidityToken = IERC20(i_uniswapFactory
         .getPair(address(constructorData.asset), address(i_weth))); 
-    // ❌ No validation that pair != address(0)
+    //  No validation that pair != address(0)
 }
 ```
 
@@ -1798,8 +1747,6 @@ constructor(ConstructorData memory constructorData)
 3. **Add validation that guardian and vault guardians contracts are properly initialized**
 4. **Consider adding maximum bounds for fee percentages to prevent excessive fees**
 
----
-
 ### [I-13] Function naming inconsistency in `getUniswapLiquidtyToken()`
 
 **Description:** 
@@ -1816,7 +1763,7 @@ The `getUniswapLiquidtyToken()` function in `VaultShares.sol` has a typo in its 
 
 ```solidity
 // src/protocol/VaultShares.sol
-function getUniswapLiquidtyToken() external view returns (address) { // ❌ Typo: "Liquidty"
+function getUniswapLiquidtyToken() external view returns (address) { //  Typo: "Liquidty"
     return address(i_uniswapLiquidityToken); // Returns "Liquidity" token
 }
 ```
@@ -1826,14 +1773,12 @@ function getUniswapLiquidtyToken() external view returns (address) { // ❌ Typo
 Fix the function name:
 
 ```solidity
-function getUniswapLiquidityToken() external view returns (address) { // ✅ Fixed: "Liquidity"
+function getUniswapLiquidityToken() external view returns (address) { //  Fixed: "Liquidity"
     return address(i_uniswapLiquidityToken);
 }
 ```
 
 **Note:** This change will break existing integrations that call the function by name, so it should be coordinated with any external systems using this function.
-
----
 
 ## Gas optimizations
 
@@ -1858,8 +1803,6 @@ function updateHoldingAllocation(AllocationData memory tokenAllocationData) publ
 
 **Recommended Mitigation:** 
 Change the data location for `AllocationData` parameters from `memory` to `calldata`. For `updateHoldingAllocation` in `VaultShares.sol`, its visibility must be changed to `external` to use `calldata`.
-
----
 
 ### [G-2] Inefficient storage reads in `_becomeTokenGuardian` function
 
