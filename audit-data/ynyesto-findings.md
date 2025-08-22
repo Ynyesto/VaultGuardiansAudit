@@ -220,6 +220,61 @@ The current implementation suggests the DAO was either never intended to have th
 
 ---
 
+### [C-4] All Uniswap operations lack slippage protection, making them vulnerable to sandwich attacks
+
+**Description:** 
+
+The `UniswapAdapter` contract performs all Uniswap operations with `amountOutMin: 0`, `amountAMin: 0` and `amountBMin: 0`, making every swap, liquidity addition, and liquidity removal vulnerable to sandwich attacks:
+
+1. **`swapExactTokensForTokens`** (line 56): `amountOutMin: 0`
+2. **`addLiquidity`** (lines 80-81): `amountAMin: 0, amountBMin: 0`  
+3. **`removeLiquidity`** (lines 101-102): `amountAMin: 0, amountBMin: 0`
+
+**Impact:** 
+
+- **Sandwich attack vulnerability**: MEV bots can front-run vault operations, manipulate prices, and back-run to extract value
+- **Value extraction**: Users lose value on every swap and liquidity operation
+- **Economic inefficiency**: The protocol consistently gets worse rates than intended
+- **MEV exploitation**: The protocol becomes a target for predatory trading strategies
+
+**Code Location:**
+
+```solidity
+// Lines 56 and 106: Swap without slippage protection
+amountOutMin: 0,
+
+// Lines 77-78: Add liquidity without slippage protection  
+amountAMin: 0,
+amountBMin: 0,
+
+// Lines 98-99: Remove liquidity without slippage protection
+amountAMin: 0,
+amountBMin: 0,
+```
+
+**Recommended Mitigation:** 
+
+Implement proper slippage protection by calculating minimum amounts based on expected output and adding a tolerance parameter:
+
+```solidity
+// Add slippage tolerance parameter
+uint256 public constant SLIPPAGE_TOLERANCE = 50; // 0.5%
+
+// Calculate minimum amounts with slippage protection
+uint256 amountOutMin = (expectedAmountOut * (1000 - SLIPPAGE_TOLERANCE)) / 1000;
+uint256 amountAMin = (expectedAmountA * (1000 - SLIPPAGE_TOLERANCE)) / 1000;
+uint256 amountBMin = (expectedAmountB * (1000 - SLIPPAGE_TOLERANCE)) / 1000;
+
+// Use calculated minimums instead of 0
+amountOutMin: amountOutMin,
+amountAMin: amountAMin,
+amountBMin: amountBMin,
+```
+
+This would protect users from excessive slippage while maintaining reasonable execution rates.
+
+---
+
 ### [H-1] The constructor of `VaultShares` tries to get LP tokens from non-existent WETH/WETH Uniswap pools when the asset of the vault is WETH, which breaks the `divestThenInvest` modifier.
 
 **Description:** 
@@ -439,62 +494,7 @@ This ensures that exactly 100% of shares are minted per deposit, maintaining the
 
 ---
 
-### [M-2] All Uniswap operations lack slippage protection, making them vulnerable to sandwich attacks
-
-**Description:** 
-
-The `UniswapAdapter` contract performs all Uniswap operations with `amountOutMin: 0`, `amountAMin: 0` and `amountBMin: 0`, making every swap, liquidity addition, and liquidity removal vulnerable to sandwich attacks:
-
-1. **`swapExactTokensForTokens`** (line 56): `amountOutMin: 0`
-2. **`addLiquidity`** (lines 80-81): `amountAMin: 0, amountBMin: 0`  
-3. **`removeLiquidity`** (lines 101-102): `amountAMin: 0, amountBMin: 0`
-
-**Impact:** 
-
-- **Sandwich attack vulnerability**: MEV bots can front-run vault operations, manipulate prices, and back-run to extract value
-- **Value extraction**: Users lose value on every swap and liquidity operation
-- **Economic inefficiency**: The protocol consistently gets worse rates than intended
-- **MEV exploitation**: The protocol becomes a target for predatory trading strategies
-
-**Code Location:**
-
-```solidity
-// Lines 56 and 106: Swap without slippage protection
-amountOutMin: 0,
-
-// Lines 77-78: Add liquidity without slippage protection  
-amountAMin: 0,
-amountBMin: 0,
-
-// Lines 98-99: Remove liquidity without slippage protection
-amountAMin: 0,
-amountBMin: 0,
-```
-
-**Recommended Mitigation:** 
-
-Implement proper slippage protection by calculating minimum amounts based on expected output and adding a tolerance parameter:
-
-```solidity
-// Add slippage tolerance parameter
-uint256 public constant SLIPPAGE_TOLERANCE = 50; // 0.5%
-
-// Calculate minimum amounts with slippage protection
-uint256 amountOutMin = (expectedAmountOut * (1000 - SLIPPAGE_TOLERANCE)) / 1000;
-uint256 amountAMin = (expectedAmountA * (1000 - SLIPPAGE_TOLERANCE)) / 1000;
-uint256 amountBMin = (expectedAmountB * (1000 - SLIPPAGE_TOLERANCE)) / 1000;
-
-// Use calculated minimums instead of 0
-amountOutMin: amountOutMin,
-amountAMin: amountAMin,
-amountBMin: amountBMin,
-```
-
-This would protect users from excessive slippage while maintaining reasonable execution rates.
-
----
-
-### [M-3] `sweepErc20s` function in `VaultGuardians` is fundamentally flawed and cannot fulfill its intended purpose
+### [M-2] `sweepErc20s` function in `VaultGuardians` is fundamentally flawed and cannot fulfill its intended purpose
 
 **Description:** 
 
@@ -589,7 +589,7 @@ The current implementation suggests the developers didn't fully understand their
 
 ---
 
-### [M-4] Inefficient and unsafe reliance on `divestThenInvest`
+### [M-3] Inefficient and unsafe reliance on `divestThenInvest`
 
 **Description:**
 
